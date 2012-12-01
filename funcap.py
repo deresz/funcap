@@ -132,7 +132,7 @@ class FunCapHook(DBG_Hooks):
             print "Function: %s (0x%x): " % (GetFunctionName(ea),ea)
             context = self.getContext(ea=ea)
             # this is maybe not needed as we can colorize via trace function in IDA
-            SetColor(ea, CIC_FUNC, self.FUNC_COLOR);
+            SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
         lines = self.format_reg_output(context)
         if self.delete_breakpoints:
             DelBpt(ea)
