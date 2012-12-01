@@ -22,19 +22,21 @@ class FunCapHook(DBG_Hooks):
     FUNC_COLOR = 0xF7CBEA;
     ITEM_COLOR = 0x70E01B;
   
-    def __init__(self, outfile="funcap.txt", delete_breakpoints = False, hexdump = False, mark = True, resume = False):
+    def __init__(self, outfile="funcap.txt", delete_breakpoints = False, hexdump = False, mark = True, resume = False, depth = 0):
         '''        
         @param outfile: log file where the output dump will be written
         @param delete_breakpoints: do we delete a breakpoint after first pass ?
         @param hexdump: do we include hexdump in dump and in IDA comments ?
         @param mark: do we add IDA comments on top of each function ?
         @param resume: resume program after hitting a breakpoint ?
+        @param depth: current stack depth capture for non-function hits
         '''
         self.outfile = outfile
         self.delete_breakpoints = delete_breakpoints
         self.hexdump = hexdump
         self.mark = mark
         self.resume = resume
+        self.depth = depth
         
         # FIXME: rneed to find better way do determine architecture ...
         (self.arch, self.bits) = self.getArch()
@@ -72,8 +74,6 @@ class FunCapHook(DBG_Hooks):
         if not arch:
             raise "Architecture currently not supported"
         return (arch, bits)
-            
-        return (self.arch, self.bits)
   
     def getNumArgsStack(self, addr):        
         argFrameSize = GetStrucSize(GetFrame(addr)) - GetFrameSize(addr) + GetFrameArgsSize(addr)
@@ -126,7 +126,7 @@ class FunCapHook(DBG_Hooks):
             print "Address: 0x%x" % ea
             # no argument dumping if not function
             # TODO: we can maybe dump local variables instead in the future ?
-            context = self.getContext(ea=ea, depth=0)
+            context = self.getContext(ea=ea, self.depth)
             SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
         else:
             print "Function: %s (0x%x): " % (GetFunctionName(ea),ea)
