@@ -1,4 +1,4 @@
-'''c v   
+'''c v
 Created on Nov 21, 2012
 
 IDApython script for simple code coverage and function call recording
@@ -11,6 +11,49 @@ from idc import *
 from idaapi import *
 import sys, re
 
+class CallGraph(GraphViewer):
+    def __init__(self, title, calls):
+        GraphViewer.__init__(self, title, calls)
+        self.calls = calls
+        self.nodes = {}
+
+    def OnRefresh(self):
+        self.Clear()
+        node_callers = {}
+        for hit in self.calls.keys():
+            name = GetFunctionName(hit)
+            #print "adding primary node %x" % hit 
+            self.nodes[hit] = self.AddNode((hit, name))
+            if not node_callers.has_key(hit):
+                node_callers[hit] = []
+            for caller in self.calls[hit].keys():
+                caller_name = GetFunctionName(caller)
+                # if called by a non-function
+                if not caller_name:
+                    caller_name = "0x%x" % caller
+                if not node_callers.has_key(caller):
+                    #print "adding node %x" % caller
+                    self.nodes[caller] = self.AddNode((caller, caller_name))
+                    node_callers[caller] = []
+                if not caller in node_callers[hit]:
+                    #print "adding edge for %x --> %x" % (caller, hit)
+                    self.AddEdge(self.nodes[caller], self.nodes[hit])
+        return True
+
+    def OnGetText(self, node_id):
+        ea, label = self[node_id]
+        return label
+
+    def OnDblClick(self, node_id):
+        ea, label = self[node_id]
+        Jump(ea)
+        return True
+    
+    def OnHint(self, node_id):
+        ea, label = self[node_id]
+        disasm = GetDisasm(ea-1)
+        return "0x%x %s" % (ea, disasm)
+
 class FunCapHook(DBG_Hooks):
     '''
     Main class to inherit from DBG_Hooks
@@ -19,31 +62,52 @@ class FunCapHook(DBG_Hooks):
     # some static constants
     STRING_EXPLORATION_MIN_LENGTH = 2
     STRING_EXPLORATION_BUF_SIZE = 128
-    FUNC_COLOR = 0xF7CBEA;
-    ITEM_COLOR = 0x70E01B;
+    FUNC_COLOR = 0xF7CBEA
+    ITEM_COLOR = 0x70E01B
+    BB_COLOR = 0xF3FA39
   
-    def __init__(self, outfile="funcap.txt", delete_breakpoints = False, hexdump = False, mark = True, resume = False, depth = 0):
+    def __init__(self, outfile=None, delete_breakpoints = False, hexdump = False, comments = True, resume = False, depth = 0, nofunc_comments = True, func_colors = True, nofunc_colors = True, output_console = True):
         '''        
-        @param outfile: log file where the output dump will be written
+        @param outfile: log file where the output dump will be written (None = no logging)
         @param delete_breakpoints: do we delete a breakpoint after first pass ?
         @param hexdump: do we include hexdump in dump and in IDA comments ?
-        @param mark: do we add IDA comments on top of each function ?
+        @param comments: do we add IDA comments on top of each function ?
         @param resume: resume program after hitting a breakpoint ?
-        @param depth: current stack depth capture for non-function hits
+        @param depth: current stack depth capture for non-function hits"
+        @param nofunc_comments: do we add IDA comments on breakpoints that are not on function start ?
+        @param func_colors: do we fill all the function blocks with colors when the breakpoint hits?
+        @param nofunc_colors: do we mark breakpoints hits which are not on function start ? 
         '''
         self.outfile = outfile
         self.delete_breakpoints = delete_breakpoints
         self.hexdump = hexdump
-        self.mark = mark
+        self.comments = comments
         self.resume = resume
         self.depth = depth
+        self.nofunc_comments = nofunc_comments
+        self.func_colors = func_colors
+        self.nofunc_colors = nofunc_colors
+        self.output_console = output_console
         
         # FIXME: rneed to find better way do determine architecture ...
         (self.arch, self.bits) = self.getArch()
         
-        self.marked = {}
+        self.calls = {}
+        self.commented = {}
         DBG_Hooks.__init__(self)
+        
+        self.out = None
 
+    def turnOn(self):
+        if self.outfile:
+            self.out = open(outfile, 'w')
+        self.hook()
+        
+    def turnOff(self):
+        if self.out != None:
+            self.out.close()
+        self.unhook()
+        
     def addAllBreakpoints(self):
         '''
         Put breakpoints on all functions
@@ -123,27 +187,46 @@ class FunCapHook(DBG_Hooks):
     
     def dbg_bpt(self, tid, ea):
         if ea not in Functions():
-            print "Address: 0x%x" % ea
+            header = "Address: 0x%x" % ea
             # no argument dumping if not function
             # TODO: we can maybe dump local variables instead in the future ?
-            context = self.getContext(ea=ea, self.depth)
-            SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+            context = self.getContext(ea=ea, depth=self.depth)
+            if self.nofunc_colors:
+                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
         else:
-            print "Function: %s (0x%x): " % (GetFunctionName(ea),ea)
+            header = "Function: %s (0x%x): " % (GetFunctionName(ea),ea)
             context = self.getContext(ea=ea)
             # this is maybe not needed as we can colorize via trace function in IDA
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
+            if not self.calls.has_key(ea):
+                self.calls[ea] = {}
+            self.calls[ea][self.return_address()] = True
         lines = self.format_reg_output(context)
         if self.delete_breakpoints:
             DelBpt(ea)
-        if self.mark and not self.marked.has_key(ea):
+        if self.comments and not self.commented.has_key(ea):
             self.add_comments(ea, lines)
-            self.marked[ea] = True
-        self.dump_regs(lines)        
-        print           
+            self.commented[ea] = True
+        if self.output_console:
+            print header
+            self.dump_regs(lines)        
+            print
+        if self.outfile:
+            print header >> self.out
+            self.dump_regs(lines, self.out)
+            print >> self.out
         # disabled now for testing but will be enabled finally
         if self.resume: ResumeProcess()
         return 0
+        
+    def return_address(self):
+        if self.arch == 'x86':
+        # FIXME need to account for when stack is not callable
+            return DbgDword(GetRegValue('ESP'))
+        elif self.arch == 'amd64':
+            return DbgQword(GetRegValue('RSP'))
+        else:
+            raise 'Unknown arch'    
     
     def add_comments(self, ea, lines):
         idx = 0
@@ -165,11 +248,14 @@ class FunCapHook(DBG_Hooks):
                 lines.append("%s: 0x%16x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
         return lines
     
-    def dump_regs(self, lines):
+    def dump_regs(self, lines, file=None):
         for line in lines:
-            print line
+            if file != None:
+                print >> file, line
+            else:
+                print line
 
-    # the following three functions are adopted from PaiMei by Pedram Amini
+    # the following few functions are adopted from PaiMei by Pedram Amini
     def get_ascii_string (self, data):
         '''
         Retrieve the ASCII string, if any, from data. Ensure that the string is valid by checking against the minimum
@@ -334,3 +420,4 @@ class FunCapHook(DBG_Hooks):
 
 debugger = FunCapHook()
 debugger.hook()
+
