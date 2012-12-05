@@ -10,7 +10,15 @@ IDApython script for simple code coverage and function call recording
 from idc import *
 from idaapi import *
 import sys, re
+import os
 
+def Caller(ret):
+    # later on we could think about analyzing area if we want the calls from DLLs
+    offset = GetFuncOffset(ret)
+    if offset == "" or offset == None:
+        offset = "0x%x" % ret
+    return offset
+    
 class CallGraph(GraphViewer):
     def __init__(self, title, calls):
         GraphViewer.__init__(self, title, calls)
@@ -27,7 +35,7 @@ class CallGraph(GraphViewer):
             if not node_callers.has_key(hit):
                 node_callers[hit] = []
             for caller in self.calls[hit].keys():
-                caller_name = GetFunctionName(caller)
+                caller_name = Caller(caller)
                 # if called by a non-function
                 if not caller_name:
                     caller_name = "0x%x" % caller
@@ -98,15 +106,21 @@ class FunCapHook(DBG_Hooks):
         
         self.out = None
 
-    def turnOn(self):
+    #This is public interface
+    #Switches are to be set manually - too lazy to implement setters and getters
+    #I started to implement GUI as well but it did not work as expected so I g
+
+    def on(self):
         if self.outfile:
             self.out = open(outfile, 'w')
         self.hook()
+        print "FunCap is ON"
         
-    def turnOff(self):
+    def off(self):
         if self.out != None:
             self.out.close()
         self.unhook()
+        print "FunCap is OFF"
         
     def addAllBreakpoints(self):
         '''
@@ -121,6 +135,11 @@ class FunCapHook(DBG_Hooks):
         '''
         for f in list(Functions()):
             DelBpt(f)
+            
+    def graph(self):
+        CallGraph("FunCap: function calls", self.calls).Show()
+
+    #End of public interface    
 
     def getArch(self):
         (arch, bits) = (None, None) 
@@ -194,7 +213,7 @@ class FunCapHook(DBG_Hooks):
             if self.nofunc_colors:
                 SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
         else:
-            header = "Function: %s (0x%x): " % (GetFunctionName(ea),ea)
+            header = "Function: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
             context = self.getContext(ea=ea)
             # this is maybe not needed as we can colorize via trace function in IDA
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
@@ -212,9 +231,10 @@ class FunCapHook(DBG_Hooks):
             self.dump_regs(lines)        
             print
         if self.outfile:
-            print header >> self.out
+            self.out.write(header + "\n")
             self.dump_regs(lines, self.out)
-            print >> self.out
+            self.out.write("\n")
+            self.out.flush()
         # disabled now for testing but will be enabled finally
         if self.resume: ResumeProcess()
         return 0
@@ -226,7 +246,11 @@ class FunCapHook(DBG_Hooks):
         elif self.arch == 'amd64':
             return DbgQword(GetRegValue('RSP'))
         else:
-            raise 'Unknown arch'    
+            raise 'Unknown arch'
+        
+    def getCaller(self):
+        ret = self.return_address()
+        return Caller(ret) + " (0x%x)" % ret
     
     def add_comments(self, ea, lines):
         idx = 0
@@ -251,7 +275,7 @@ class FunCapHook(DBG_Hooks):
     def dump_regs(self, lines, file=None):
         for line in lines:
             if file != None:
-                print >> file, line
+                file.write(line + "\n")
             else:
                 print line
 
@@ -415,9 +439,8 @@ class FunCapHook(DBG_Hooks):
             explored_string = self.get_printable_string(explored, print_dots)
 
         return explored_string
-
+    
 # main()
-
-debugger = FunCapHook()
-debugger.hook()
-
+outfile = os.path.expanduser('~') + "/funcap.txt"
+d = FunCapHook(outfile=outfile)
+d.on()
