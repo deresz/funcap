@@ -266,10 +266,10 @@ class FunCapHook(DBG_Hooks):
         lines = []
         if self.bits == 32:
             for reg in regs:
-                lines.append("%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                lines.append("%s: 0x%08x --> %3s" % (reg['name'], reg['value'], repr(reg['deref'])))
         else:
             for reg in regs:
-                lines.append("%s: 0x%16x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                lines.append("%s: 0x%016x --> %3s" % (reg['name'], reg['value'], repr(reg['deref'])))
         return lines
     
     def dump_regs(self, lines, file=None):
