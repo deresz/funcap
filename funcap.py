@@ -154,6 +154,10 @@ class FunCapHook(DBG_Hooks):
                 arch = 'x86'
                 bits = 32
                 break
+            elif name == 'R0':
+                arch = 'arm'
+                bits = 32
+                break
         if not arch:
             raise "Architecture currently not supported"
         return (arch, bits)
@@ -198,7 +202,13 @@ class FunCapHook(DBG_Hooks):
                 for arg in range(1, depth):
                     value = DbgQword(stack+arg*8)
                     l.append({'name': "+%02x" % (arg*8), 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-    
+        elif self.arch == 'arm':
+            for x in idaapi.dbg_get_registers():
+                name = x[0]
+                value = idc.GetRegValue(name)
+                l.append({'name': name, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
+                # IDA doesn't seem to show the stack argument frame size so we don't show stack-passed arguments here
+                # Still, we have first four arguments in registers R0-R4
         else:
             raise "Unknown arch"
     
@@ -245,6 +255,8 @@ class FunCapHook(DBG_Hooks):
             return DbgDword(GetRegValue('ESP'))
         elif self.arch == 'amd64':
             return DbgQword(GetRegValue('RSP'))
+        elif self.arch == 'arm':
+            return GetRegValue('LR')
         else:
             raise 'Unknown arch'
         
@@ -266,10 +278,10 @@ class FunCapHook(DBG_Hooks):
         lines = []
         if self.bits == 32:
             for reg in regs:
-                lines.append("%s: 0x%08x --> %3s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                lines.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
         else:
             for reg in regs:
-                lines.append("%s: 0x%016x --> %3s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                lines.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
         return lines
     
     def dump_regs(self, lines, file=None):
