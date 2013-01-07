@@ -1,11 +1,20 @@
 '''c v
 Created on Nov 21, 2012
 
-IDApython script for simple code coverage and function call recording
-
-@author: deresz
+@author: deresz@gmail.com
 @version: 0.1
 '''
+
+# This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public
+# License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+# warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with this program; if not, write to the Free
+# Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+#
 
 from idc import *
 from idaapi import *
@@ -14,16 +23,17 @@ import os
 
 def Caller(ret):
     # later on we could think about analyzing area if we want the calls from DLLs
-    offset = GetFuncOffset(ret)
+    offset = GetFuncOffset(ret)    
     if offset == "" or offset == None:
         offset = "0x%x" % ret
     return offset
     
 class CallGraph(GraphViewer):
-    def __init__(self, title, calls):
+    def __init__(self, title, calls, exact_offsets):
         GraphViewer.__init__(self, title, calls)
         self.calls = calls
         self.nodes = {}
+        self.exact_offsets = exact_offsets
 
     def OnRefresh(self):
         self.Clear()
@@ -35,17 +45,23 @@ class CallGraph(GraphViewer):
             if not node_callers.has_key(hit):
                 node_callers[hit] = []
             for caller in self.calls[hit].keys():
-                caller_name = Caller(caller)
-                # if called by a non-function
-                if not caller_name:
-                    caller_name = "0x%x" % caller
-                if not node_callers.has_key(caller):
+                if self.exact_offsets == True:
+                    caller_name = Caller(caller)
+                    graph_caller = caller
+                else:
+                    caller_name = GetFunctionName(caller)
+                    if not caller_name:
+                        caller_name = "0x%x" % caller
+                        graph_caller = caller
+                    else:
+                        graph_caller = LocByName(caller_name)
+                if not node_callers.has_key(graph_caller):
                     #print "adding node %x" % caller
-                    self.nodes[caller] = self.AddNode((caller, caller_name))
-                    node_callers[caller] = []
-                if not caller in node_callers[hit]:
+                    self.nodes[graph_caller] = self.AddNode((graph_caller, caller_name))
+                    node_callers[graph_caller] = []
+                if not graph_caller in node_callers[hit]:
                     #print "adding edge for %x --> %x" % (caller, hit)
-                    self.AddEdge(self.nodes[caller], self.nodes[hit])
+                    self.AddEdge(self.nodes[graph_caller], self.nodes[hit])
         return True
 
     def OnGetText(self, node_id):
@@ -74,7 +90,8 @@ class FunCapHook(DBG_Hooks):
     ITEM_COLOR = 0x70E01B
     BB_COLOR = 0xF3FA39
   
-    def __init__(self, outfile=None, delete_breakpoints = False, hexdump = False, comments = True, resume = False, depth = 0, nofunc_comments = True, func_colors = True, nofunc_colors = True, output_console = True):
+    def __init__(self, outfile=None, delete_breakpoints = False, hexdump = False, comments = True, resume = False, depth = 0, \
+                 nofunc_comments = True, func_colors = True, nofunc_colors = True, output_console = True):
         '''        
         @param outfile: log file where the output dump will be written (None = no logging)
         @param delete_breakpoints: do we delete a breakpoint after first pass ?
@@ -136,8 +153,14 @@ class FunCapHook(DBG_Hooks):
         for f in list(Functions()):
             DelBpt(f)
             
-    def graph(self):
-        CallGraph("FunCap: function calls", self.calls).Show()
+    def graph(self, exact_offsets = True):
+        '''
+        Draw the graph
+        
+        @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
+            if disabled, only function name will be presented as node (more regular graph but less precise information)
+        '''
+        CallGraph("FunCap: function calls", self.calls, exact_offsets).Show()
 
     #End of public interface    
 
