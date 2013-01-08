@@ -2,7 +2,7 @@
 Created on Nov 21, 2012
 
 @author: deresz@gmail.com
-@version: 0.1
+@version: 0.2
 '''
 
 # This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -82,7 +82,9 @@ class FunCapHook(DBG_Hooks):
     '''
     Main class to inherit from DBG_Hooks
     '''  
-
+    # FIXME it is better to rewrite it to make FunCapHook a base class and then implement architecture-dependent classes which inherit and
+    # implement architecture-dependent methods. We just have too much ifs yet ... 
+    
     # some static constants
     STRING_EXPLORATION_MIN_LENGTH = 2
     STRING_EXPLORATION_BUF_SIZE = 128
@@ -128,25 +130,67 @@ class FunCapHook(DBG_Hooks):
     #I started to implement GUI as well but it did not work as expected so I g
 
     def on(self):
+        '''
+        Turn the script on
+        '''
         if self.outfile:
             self.out = open(outfile, 'w')
         self.hook()
         print "FunCap is ON"
         
     def off(self):
+        '''
+        Turn the script off
+        '''
         if self.out != None:
             self.out.close()
         self.unhook()
         print "FunCap is OFF"
         
-    def addAllBreakpoints(self):
+    def addFuncStart(self):
         '''
-        Put breakpoints on all functions
+        Add breakpoints on all function starts
         '''
         for f in list(Functions()):
             AddBpt(f)
+    
+    def addFuncRet(self):
+        '''
+        Add breakpoints on all return from subroutine instructions
+        '''
+        for seg_ea in Segments():
+        # For each of the defined elements
+            for head in Heads(seg_ea, SegEnd(seg_ea)):
 
-    def delAllBreakpoints(self):
+                    # If it's an instruction
+                    if isCode(GetFlags(head)):
+
+                        if self.isRet(head):
+                            AddBpt(head)
+    
+    def addAll(self):
+        '''
+        Add breakpoints on both function starts and return instructions
+        '''
+        self.addFuncStart()
+        self.addFuncRet()
+    
+    ### END of public interface
+
+    def isRet(self, ea):
+        '''
+        Check if we are at return from subrouting instruction
+        '''
+        if self.arch == 'x86' or self.arch == 'amd64':
+            mnem = GetMnem(ea)
+            return re.match('ret', mnem)
+        elif self.arch == 'arm':
+            disasm = GetDisasm(ea)
+            return re.match('POP.*,PC\}', disasm) or re.match('BX(\s+)LR', disasm)
+        else: 
+            raise 'Unknown arch'
+
+    def delAllBp(self):
         '''
         Remove all function breakpoints
         '''
@@ -165,8 +209,11 @@ class FunCapHook(DBG_Hooks):
     #End of public interface    
 
     def getArch(self):
+        '''
+        Get the target architecture.
+        Supported archs: x86 32-bit, x86 64-bit, ARM 32-bit
+        '''
         (arch, bits) = (None, None) 
-        # currently only Intel architectures
         for x in idaapi.dbg_get_registers():
             name = x[0]
             if name == 'RAX':
@@ -186,6 +233,9 @@ class FunCapHook(DBG_Hooks):
         return (arch, bits)
   
     def getNumArgsStack(self, addr):        
+        '''
+        Get the size of arguments frame. Seems to only work on x86/amd64
+        '''
         argFrameSize = GetStrucSize(GetFrame(addr)) - GetFrameSize(addr) + GetFrameArgsSize(addr)
         return argFrameSize / (self.bits/8)
   
@@ -198,7 +248,7 @@ class FunCapHook(DBG_Hooks):
         @param ea: if not None, stack will be examined for arguments
         @depth: stack depth - if none then number of arguments is determined automatically
         '''
-        # currently only Intel architectures
+        # get context for Intel and ARM architectures
         l = []        
         if self.arch == 'x86':
             for x in idaapi.dbg_get_registers():
@@ -238,14 +288,10 @@ class FunCapHook(DBG_Hooks):
         return l 
     
     def dbg_bpt(self, tid, ea):
-        if ea not in Functions():
-            header = "Address: 0x%x" % ea
-            # no argument dumping if not function
-            # TODO: we can maybe dump local variables instead in the future ?
-            context = self.getContext(ea=ea, depth=self.depth)
-            if self.nofunc_colors:
-                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
-        else:
+        '''
+        Callback routine called each time the breakpoint is hit
+        '''
+        if ea in Functions(): # start of a function
             header = "Function: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
             context = self.getContext(ea=ea)
             # this is maybe not needed as we can colorize via trace function in IDA
@@ -253,6 +299,23 @@ class FunCapHook(DBG_Hooks):
             if not self.calls.has_key(ea):
                 self.calls[ea] = {}
             self.calls[ea][self.return_address()] = True
+        elif self.isRet(ea): # return from a function
+            function_name = GetFunctionName(ea)
+            if function_name:
+                header = "Returning from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
+                context = self.getContext(ea=ea)
+            else:
+                header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
+                context = self.getContext(ea=ea, depth=0)
+            if self.nofunc_colors:
+                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)         
+        else: # some other address
+            header = "Address: 0x%x" % ea
+            # no argument dumping if not function
+            # TODO: we can maybe dump local variables instead in the future ?
+            context = self.getContext(ea=ea, depth=self.depth)
+            if self.nofunc_colors:
+                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
         lines = self.format_reg_output(context)
         if self.delete_breakpoints:
             DelBpt(ea)
@@ -273,8 +336,10 @@ class FunCapHook(DBG_Hooks):
         return 0
         
     def return_address(self):
+        '''
+        Get the return address stored on the stack or register
+        '''
         if self.arch == 'x86':
-        # FIXME need to account for when stack is not callable
             return DbgDword(GetRegValue('ESP'))
         elif self.arch == 'amd64':
             return DbgQword(GetRegValue('RSP'))
@@ -284,10 +349,16 @@ class FunCapHook(DBG_Hooks):
             raise 'Unknown arch'
         
     def getCaller(self):
+        '''
+        Return the formatted caller func name + its address
+        '''
         ret = self.return_address()
         return Caller(ret) + " (0x%x)" % ret
     
     def add_comments(self, ea, lines):
+        '''
+        Add context dump as IDA comments
+        '''
         idx = 0
         for line in lines:
             # workaround with Eval() - ExtLinA() doesn't work well in idapython
