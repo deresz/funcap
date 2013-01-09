@@ -189,13 +189,6 @@ class FunCapHook(DBG_Hooks):
             return re.match('POP.*,PC\}', disasm) or re.match('BX(\s+)LR', disasm)
         else: 
             raise 'Unknown arch'
-
-    def delAllBp(self):
-        '''
-        Remove all function breakpoints
-        '''
-        for f in list(Functions()):
-            DelBpt(f)
             
     def graph(self, exact_offsets = True):
         '''
@@ -295,7 +288,8 @@ class FunCapHook(DBG_Hooks):
             header = "Function: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
             context = self.getContext(ea=ea)
             # this is maybe not needed as we can colorize via trace function in IDA
-            SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
+            if self.func_colors:
+                SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
             if not self.calls.has_key(ea):
                 self.calls[ea] = {}
             self.calls[ea][self.return_address()] = True
