@@ -1,8 +1,11 @@
-'''c v
+'''
 Created on Nov 21, 2012
 
 @author: deresz@gmail.com
-@version: 0.2
+@version: 0.3
+
+Core module for FunCap. All architecture-dependent modules inherit from this one.
+
 '''
 
 # This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -16,75 +19,56 @@ Created on Nov 21, 2012
 # Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #
 
+# IDA imports
+
 from idc import *
 from idaapi import *
+from idautils import *
 import sys, re
 import os
 
-def Caller(ret):
-    # later on we could think about analyzing area if we want the calls from DLLs
-    offset = GetFuncOffset(ret)    
+# Graph module import
+
+import callgraph
+
+# utility function
+
+def FormatOffset(ea):
+    offset = GetFuncOffset(ea)    
     if offset == "" or offset == None:
-        offset = "0x%x" % ret
+        offset = "0x%x" % ea
     return offset
+
+def getArch():
+    '''
+    Get the target architecture.
+    Supported archs: x86 32-bit, x86 64-bit, ARM 32-bit
+    '''
+    (arch, bits) = (None, None) 
+    for x in idaapi.dbg_get_registers():
+        name = x[0]
+        if name == 'RAX':
+            arch = 'amd64'
+            bits = 64
+            break
+        elif name == 'EAX':
+            arch = 'x86'
+            bits = 32
+            break
+        elif name == 'R0':
+            arch = 'arm'
+            bits = 32
+            break
     
-class CallGraph(GraphViewer):
-    def __init__(self, title, calls, exact_offsets):
-        GraphViewer.__init__(self, title, calls)
-        self.calls = calls
-        self.nodes = {}
-        self.exact_offsets = exact_offsets
+    return (arch, bits)
 
-    def OnRefresh(self):
-        self.Clear()
-        node_callers = {}
-        for hit in self.calls.keys():
-            name = GetFunctionName(hit)
-            #print "adding primary node %x" % hit 
-            self.nodes[hit] = self.AddNode((hit, name))
-            if not node_callers.has_key(hit):
-                node_callers[hit] = []
-            for caller in self.calls[hit].keys():
-                if self.exact_offsets == True:
-                    caller_name = Caller(caller)
-                    graph_caller = caller
-                else:
-                    caller_name = GetFunctionName(caller)
-                    if not caller_name:
-                        caller_name = "0x%x" % caller
-                        graph_caller = caller
-                    else:
-                        graph_caller = LocByName(caller_name)
-                if not node_callers.has_key(graph_caller):
-                    #print "adding node %x" % caller
-                    self.nodes[graph_caller] = self.AddNode((graph_caller, caller_name))
-                    node_callers[graph_caller] = []
-                if not graph_caller in node_callers[hit]:
-                    #print "adding edge for %x --> %x" % (caller, hit)
-                    self.AddEdge(self.nodes[graph_caller], self.nodes[hit])
-        return True
-
-    def OnGetText(self, node_id):
-        ea, label = self[node_id]
-        return label
-
-    def OnDblClick(self, node_id):
-        ea, label = self[node_id]
-        Jump(ea)
-        return True
-    
-    def OnHint(self, node_id):
-        ea, label = self[node_id]
-        disasm = GetDisasm(ea-1)
-        return "0x%x %s" % (ea, disasm)
+# throw it to a separate file later on
 
 class FunCapHook(DBG_Hooks):
     '''
     Main class to inherit from DBG_Hooks
     '''  
-    # FIXME it is better to rewrite it to make FunCapHook a base class and then implement architecture-dependent classes which inherit and
-    # implement architecture-dependent methods. We just have too much ifs yet ... 
-    
+ 
     # some static constants
     STRING_EXPLORATION_MIN_LENGTH = 2
     STRING_EXPLORATION_BUF_SIZE = 128
@@ -92,8 +76,7 @@ class FunCapHook(DBG_Hooks):
     ITEM_COLOR = 0x70E01B
     BB_COLOR = 0xF3FA39
   
-    def __init__(self, outfile=None, delete_breakpoints = False, hexdump = False, comments = True, resume = False, depth = 0, \
-                 nofunc_comments = True, func_colors = True, nofunc_colors = True, output_console = True):
+    def __init__(self, **kwargs):
         '''        
         @param outfile: log file where the output dump will be written (None = no logging)
         @param delete_breakpoints: do we delete a breakpoint after first pass ?
@@ -105,36 +88,41 @@ class FunCapHook(DBG_Hooks):
         @param func_colors: do we fill all the function blocks with colors when the breakpoint hits?
         @param nofunc_colors: do we mark breakpoints hits which are not on function start ? 
         '''
-        self.outfile = outfile
-        self.delete_breakpoints = delete_breakpoints
-        self.hexdump = hexdump
-        self.comments = comments
-        self.resume = resume
-        self.depth = depth
-        self.nofunc_comments = nofunc_comments
-        self.func_colors = func_colors
-        self.nofunc_colors = nofunc_colors
-        self.output_console = output_console
+        self.outfile = kwargs.get('outfile', None)
+        self.delete_breakpoints = kwargs.get('delete_breakpoints', False)
+        self.hexdump = kwargs.get('hexdump', False)
+        self.comments = kwargs.get('comments', True)
+        self.resume = kwargs.get('resume', True)
+        self.depth = kwargs.get('depth', 0)
+        self.nofunc_comments = kwargs.get('nofunc_comments', True)
+        self.func_colors = kwargs.get('func_colors', True)
+        self.nofunc_colors = kwargs.get('nofunc_colors', True)
+        self.output_console = kwargs.get('output_console', True)
         
-        # FIXME: rneed to find better way do determine architecture ...
-        (self.arch, self.bits) = self.getArch()
+        # TODO: need to find better way do determine architecture ...
         
-        self.calls = {}
         self.commented = {}
+        self.currentFormatOffsets = []
+        self.current_call = None
+        self.saved_contexts = {}
+        self.function_calls = {}
+        self.calls_graph = {}
         DBG_Hooks.__init__(self)
         
         self.out = None
 
-    #This is public interface
-    #Switches are to be set manually - too lazy to implement setters and getters
-    #I started to implement GUI as well but it did not work as expected so I g
+    ###
+    # This a is public interface
+    # Switches are to be set manually - too lazy to implement setters and getters
+    # I started to implement GUI as well but it did not work as expected so it won't be implemented...
+    ###
 
     def on(self):
         '''
         Turn the script on
         '''
         if self.outfile:
-            self.out = open(outfile, 'w')
+            self.out = open(self.outfile, 'w')
         self.hook()
         print "FunCap is ON"
         
@@ -168,187 +156,86 @@ class FunCapHook(DBG_Hooks):
                         if self.isRet(head):
                             AddBpt(head)
     
-    def addAll(self):
+    def addCallee(self):
         '''
         Add breakpoints on both function starts and return instructions
         '''
         self.addFuncStart()
         self.addFuncRet()
+        
+    def addCaller(self, func = "", recursive = False):
+        '''
+        Add breakpoints on function calls
+        
+        @param func: this should be a function name or "screen". If given, breakpoints will only be put within this range. Screen means
+            function pointed by the current cursor
+        @param recursive: if True, the subfunction calls will also be captured
+        '''
+        
+        if func == "screen":
+            ea = ScreenEA()
+            f = get_func(ea)
+            start_ea = f.startEA
+            end_ea = f.endEA
+            self.addCallBp(start_ea, end_ea)
+        elif func != "":
+            ea = LocByName(func)
+            f = get_func(ea)
+            start_ea = f.startEA
+            end_ea = f.endEA
+            self.addCallBp(start_ea, end_ea)
+        else:
+            for seg_ea in Segments():
+                # For each of the defined elements
+                start_ea = seg_ea
+                end_ea = SegEnd(seg_ea)
+                self.addCallBp(start_ea, end_ea)
     
-    ### END of public interface
-
-    def isRet(self, ea):
-        '''
-        Check if we are at return from subrouting instruction
-        '''
-        if self.arch == 'x86' or self.arch == 'amd64':
-            mnem = GetMnem(ea)
-            return re.match('ret', mnem)
-        elif self.arch == 'arm':
-            disasm = GetDisasm(ea)
-            return re.match('POP.*,PC\}', disasm) or re.match('BX(\s+)LR', disasm)
-        else: 
-            raise 'Unknown arch'
-            
-    def graph(self, exact_offsets = True):
+    def graph(self, exact_offsets = False):
         '''
         Draw the graph
         
         @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
             if disabled, only function name will be presented as node (more regular graph but less precise information)
         '''
-        CallGraph("FunCap: function calls", self.calls, exact_offsets).Show()
-
-    #End of public interface    
-
-    def getArch(self):
+        callgraph.CallGraph("FunCap: function calls", self.calls, exact_offsets).Show()
+    
+    ###                
+    # END of public interface
+    ###
+    
+    def addCallBp(self, start_ea, end_ea):
         '''
-        Get the target architecture.
-        Supported archs: x86 32-bit, x86 64-bit, ARM 32-bit
+        Add breakpoints on every subrountine call instruction within the scope (start_ea, end_ea)
         '''
-        (arch, bits) = (None, None) 
-        for x in idaapi.dbg_get_registers():
-            name = x[0]
-            if name == 'RAX':
-                arch = 'amd64'
-                bits = 64
-                break
-            elif name == 'EAX':
-                arch = 'x86'
-                bits = 32
-                break
-            elif name == 'R0':
-                arch = 'arm'
-                bits = 32
-                break
-        if not arch:
-            raise "Architecture currently not supported"
-        return (arch, bits)
-  
+        for head in Heads(start_ea, end_ea):
+
+            # If it's an instruction
+            if isCode(GetFlags(head)):
+
+                if self.isCall(head):
+                    AddBpt(head)
+        
     def getNumArgsStack(self, addr):        
         '''
-        Get the size of arguments frame. Seems to only work on x86/amd64
+        Get the size of arguments frame
         '''
         argFrameSize = GetStrucSize(GetFrame(addr)) - GetFrameSize(addr) + GetFrameArgsSize(addr)
         return argFrameSize / (self.bits/8)
-  
-    def getContext(self, general_only=True, ea=None, depth=None):
-        '''
-        Captures register states + arguments on the stack and returns it in an array
-        We ask IDA for number of arguments to look on the stack
-        
-        @param general_only: only general registers (names start from E or R) - only Intel arch currently
-        @param ea: if not None, stack will be examined for arguments
-        @depth: stack depth - if none then number of arguments is determined automatically
-        '''
-        # get context for Intel and ARM architectures
-        l = []        
-        if self.arch == 'x86':
-            for x in idaapi.dbg_get_registers():
-                name = x[0]
-                if not general_only or (re.match("E", name) and name != 'ES'):
-                    value = idc.GetRegValue(name)
-                    l.append({'name': name, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-            if ea != None:
-                stack = idc.GetRegValue('ESP')
-                if depth == None: depth = self.getNumArgsStack(ea)+1
-                for arg in range(1, depth):
-                # FIXME - try-catch for non readable stack
-                    value = DbgDword(stack+arg*4)
-                    l.append({'name': "+%02x" % (arg*4), 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-        elif self.arch == 'amd64':
-            for x in idaapi.dbg_get_registers():
-                name = x[0]
-                if not general_only or (re.match("R", name) and name != 'RS'):
-                    value = idc.GetRegValue(name)
-                    l.append({'name': name, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-            if ea != None:
-                stack = idc.GetRegValue('RSP')
-                if depth == None: depth = self.getNumArgsStack(ea)+1
-                for arg in range(1, depth):
-                    value = DbgQword(stack+arg*8)
-                    l.append({'name': "+%02x" % (arg*8), 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-        elif self.arch == 'arm':
-            for x in idaapi.dbg_get_registers():
-                name = x[0]
-                value = idc.GetRegValue(name)
-                l.append({'name': name, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
-                # IDA doesn't seem to show the stack argument frame size so we don't show stack-passed arguments here
-                # Still, we have first four arguments in registers R0-R4
-        else:
-            raise "Unknown arch"
     
-        return l 
-    
-    def dbg_bpt(self, tid, ea):
-        '''
-        Callback routine called each time the breakpoint is hit
-        '''
-        if ea in Functions(): # start of a function
-            header = "Function: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
-            context = self.getContext(ea=ea)
-            # this is maybe not needed as we can colorize via trace function in IDA
-            if self.func_colors:
-                SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
-            if not self.calls.has_key(ea):
-                self.calls[ea] = {}
-            self.calls[ea][self.return_address()] = True
-        elif self.isRet(ea): # return from a function
-            function_name = GetFunctionName(ea)
-            if function_name:
-                header = "Returning from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
-                context = self.getContext(ea=ea)
-            else:
-                header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
-                context = self.getContext(ea=ea, depth=0)
-            if self.nofunc_colors:
-                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)         
-        else: # some other address
-            header = "Address: 0x%x" % ea
-            # no argument dumping if not function
-            # TODO: we can maybe dump local variables instead in the future ?
-            context = self.getContext(ea=ea, depth=self.depth)
-            if self.nofunc_colors:
-                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
-        lines = self.format_reg_output(context)
-        if self.delete_breakpoints:
-            DelBpt(ea)
-        if self.comments and not self.commented.has_key(ea):
-            self.add_comments(ea, lines)
-            self.commented[ea] = True
-        if self.output_console:
-            print header
-            self.dump_regs(lines)        
-            print
-        if self.outfile:
-            self.out.write(header + "\n")
-            self.dump_regs(lines, self.out)
-            self.out.write("\n")
-            self.out.flush()
-        # disabled now for testing but will be enabled finally
-        if self.resume: ResumeProcess()
-        return 0
-        
-    def return_address(self):
-        '''
-        Get the return address stored on the stack or register
-        '''
-        if self.arch == 'x86':
-            return DbgDword(GetRegValue('ESP'))
-        elif self.arch == 'amd64':
-            return DbgQword(GetRegValue('RSP'))
-        elif self.arch == 'arm':
-            return GetRegValue('LR')
-        else:
-            raise 'Unknown arch'
-        
     def getCaller(self):
         '''
         Return the formatted caller func name + its address
         '''
         ret = self.return_address()
-        return Caller(ret) + " (0x%x)" % ret
+        return FormatOffset(ret) + " (0x%x)" % ret
     
+    def getRegValueFromCtx(self, name, context):
+        
+        for reg in context:
+            if reg['name'] == name:
+                return reg
+        
     def add_comments(self, ea, lines):
         '''
         Add context dump as IDA comments
@@ -362,7 +249,7 @@ class FunCapHook(DBG_Hooks):
                 print "idc.Eval() returned an error: %s" % ret
             idx += 1
     
-    def format_reg_output(self, regs):
+    def format_normal(self, regs):
         lines = []
         if self.bits == 32:
             for reg in regs:
@@ -370,16 +257,42 @@ class FunCapHook(DBG_Hooks):
         else:
             for reg in regs:
                 lines.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
-        return lines
+        return (lines, lines)
     
-    def dump_regs(self, lines, file=None):
+    def format_call(self, regs):
+        full_ctx = []
+        cmt_ctx = []
+        for reg in regs:
+            full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+            if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
+                # we can shorten 'deref' if needed here
+                cmt_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+        return (full_ctx, cmt_ctx)
+    
+    def format_return(self, regs, saved_regs):
+        full_ctx = []
+        cmt_ctx = []
+        for reg in regs:
+            full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+            if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
+                cmt_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+        for regs in saved_regs:
+            if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
+                new_deref = self.smart_dereference(reg['value'], print_dots=True, hex_dump=self.hexdump)
+                full_ctx.append("%3s: 0x%08x --> s_%s" % (reg['name'], reg['value'], repr(new_deref)))
+                cmt_ctx.append("%3s: 0x%08x --> s_%s" % (reg['name'], reg['value'], repr(new_deref)))
+        return (full_ctx, cmt_ctx)
+    
+    def dump_regs(self, lines, outfile=None):
         for line in lines:
-            if file != None:
-                file.write(line + "\n")
+            if outfile != None:
+                outfile.write(line + "\n")
             else:
                 print line
 
     # the following few functions are adopted from PaiMei by Pedram Amini
+    # they are here to format and present data in a nice way
+    
     def get_ascii_string (self, data):
         '''
         Retrieve the ASCII string, if any, from data. Ensure that the string is valid by checking against the minimum
@@ -474,7 +387,7 @@ class FunCapHook(DBG_Hooks):
         '''
 
         dump  = prefix
-        slice = ""
+        hslice = ""
 
         for byte in data:
             if addr % 16 == 0:
@@ -487,10 +400,10 @@ class FunCapHook(DBG_Hooks):
                         dump += "."
 
                 dump += "\n%s%04x: " % (prefix, addr)
-                slice = ""
+                hslice = ""
 
             dump  += "%02x " % ord(byte)
-            slice += byte
+            hslice += byte
             addr  += 1
 
         remainder = addr % 16
@@ -538,9 +451,151 @@ class FunCapHook(DBG_Hooks):
         if not explored_string:
             explored_string = self.get_printable_string(explored, print_dots)
 
-        return explored_string
+        return explored_string 
     
-# main()
-outfile = os.path.expanduser('~') + "/funcap.txt"
-d = FunCapHook(outfile=outfile)
-d.on()
+    def dump_context(self, header, context_full):
+        '''
+        Dumping full execution context to file and console depending on the options
+        '''
+        if self.output_console:
+            print header
+            self.dump_regs(context_full)        
+            print
+        if self.outfile:
+            self.out.write(header + "\n")
+            self.dump_regs(context_full, self.out)
+            self.out.write("\n")
+            self.out.flush()
+    
+    def next_ins(self, ea):
+        end = idaapi.cvar.inf.maxEA
+        return idaapi.next_head(ea, end)
+    
+    ###
+    # debugging hooks
+    ###
+    
+    
+    def dbg_bpt(self, tid, ea):
+        '''
+        Callback routine called each time the breakpoint is hit
+        '''
+        
+        if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
+            # need to get context from within a called function
+            function_call = self.function_calls[ea]
+            raw_context = self.getContext(stack_offset = 0, depth=function_call['num_args'])
+            header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (self.function_call['func_name'], FormatOffset(ea), ea)
+            sp = self.getSP()
+            if self.saved_contexts.has_key(sp):
+                saved_context = self.saved_contexts[sp]
+                del self.saved_contexts[sp]
+            else:
+                print "WARNING: saved context not found for function %s stack pointer 0x%x" % (self.function_call['func_name'], sp)
+                saved_context = None
+            (context_full, context_comments) = self.format_return(raw_context, saved_context)
+            # we don't need it anymore here
+            
+        elif ea in Functions(): # start of a function
+            header = "Function call: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
+            raw_context= self.getContext(ea=ea)
+            if self.func_colors:
+                SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
+            
+            # update data for graph
+            if not self.calls_graph.has_key(ea):
+                self.calls_graph[ea] = {}
+            self.calls_graph[ea][self.return_address()] = True
+            (context_full, context_comments) = self.format_normal(raw_context)
+             
+        elif self.isRet(ea): # stopped on a ret instruction
+            function_name = GetFunctionName(ea)
+            if function_name:
+                header = "Return from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
+                raw_context = self.getContext(ea=ea)
+            else:
+                header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
+                raw_context = self.getContext(ea=ea, depth=0)
+            if self.nofunc_colors:
+                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+            (context_full, context_comments) = self.format_normal(raw_context)    
+                         
+        elif self.isCall(ea): # stopped on a call to a function
+            # we need to register context before step in
+            self.current_caller = { 'addr' : ea, 'ctx' : self.getContext(ea=ea, depth=0) }
+            # assertion: this must be atomic (and should be according to IDA pro documentation)
+            # TODO need to account for exceptions
+            StepInto()
+            return 0
+        
+        else: # some other address
+            header = "Address: 0x%x" % ea
+            # no argument dumping if not function
+            # TODO: we can maybe dump local variables instead in the future ?
+            raw_context = self.getContext(ea=ea, depth=self.depth)
+            (context_full, context_comments) = self.format_normal(raw_context)
+            if self.nofunc_colors:
+                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+        
+        if self.delete_breakpoints:
+            DelBpt(ea)
+        if self.comments and not self.commented.has_key(ea):
+            self.add_comments(ea, context_comments)
+            self.commented[ea] = True
+ 
+        self.dump_context(header, context_full)
+ 
+        # disabled now for testing but will be enabled finally
+        if self.resume: ResumeProcess()
+        return 0
+        
+    def dbg_step_into(self):
+        # if we are here - means this is after single step into a call function
+        # so this must be a function (btw - we don't use our plugin with obfuscated code - unpack it yourself first!)
+        ret_addr = self.getCaller()
+        if ret_addr != self.next_ins(self.current_caller['addr']):
+            # that's not us - return to IDA
+            return 0
+        ea = self.getIP()
+        caller = FormatOffset(self.current_caller['addr'])
+        
+        # update data for graph
+        if not self.calls_graph.has_key(ea):
+            self.calls_graph[ea] = {}
+        self.calls_graph[ea][self.return_address()] = True
+ 
+        name = GetFunctionName(ea)
+        # if it's a library call - try to create a function to read out it's arguments (and name)
+        if not name:
+            r = MakeFunction(ea)
+            if(r):
+                name = GetFunctionName(ea)
+            if not name:
+                name = "0x%x" % ea
+            else:
+                num_args = self.getNumArgsStack(ea)
+                arguments = self.getStackArgs(self, ea=ea, depth=num_args+1)
+        header = "Function call: %s to %s (0x%x)" % (caller, name, ea)
+        raw_context = self.current_caller['ctx'] + arguments
+       
+        # hash of all function call instances (indexed by stack frame address)
+        # we need this to update references to arguments when exiting the function
+        self.saved_contexts[self.getSavedSP(raw_context)] = raw_context
+        
+        (context_full, context_comments) = self.format_call(raw_context)
+        self.dump_context(header, context_full)
+        if self.comments and not self.commented.has_key(caller):
+            self.add_comments(caller, context_comments)
+            self.commented[ea] = True
+            MakeComm(caller, "%s()" % name)
+    
+        AddBpt(ret_addr) # catch return from the function
+        # hash of all call instructions (indexed by return address)
+        if not self.function_calls.has_key(ret_addr):
+            self.function_calls[ret_addr] = { 'calling_addr' : self.current_caller, 'ret_addr' : ret_addr, 'func_name' : name, \
+                                             'func_addr' : ea, 'num_args' : num_args}
+            
+        if self.resume: ResumeProcess()    
+        return 0
+ 
+
