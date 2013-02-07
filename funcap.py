@@ -31,6 +31,8 @@ from idc import *
 
 # utility functions
 
+# TODO test AMD64 and ARM + graphs!
+
 def FormatOffset(ea):
     offset = GetFuncOffset(ea)    
     if offset == "" or offset == None:
@@ -419,7 +421,7 @@ class FunCapHook(DBG_Hooks):
 
         return dump + "\n"
  
-    def smart_dereference (self, address, print_dots=True, hex_dump=False):
+    def smart_dereference (self, address, print_dots=True, hex_dump=False):    
         '''
         "Intelligently" discover data behind an address. The address is dereferenced and explored in search of an ASCII
         or Unicode string. In the absense of a string the printable characters are returned with non-printables
@@ -526,6 +528,9 @@ class FunCapHook(DBG_Hooks):
                 raw_context = self.getContext(ea=ea, depth=0)
             if self.colors:
                 SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+            
+            #TODO: make the string shorter in IDA comments (x2)
+            
             (context_full, context_comments) = self.format_normal(raw_context)    
                          
         elif self.isCall(ea): # stopped on a call to a function
