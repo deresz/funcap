@@ -22,6 +22,20 @@ So we got one fat script file now :)
 # Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #
 
+### TODO LIST
+## BEFORE RELEASE:
+# - rewrite dbg hooks and take care of ambiguous breakpoints interpretation
+# - trampoline jump-over feature
+# - need to change the regexp registry capture definition
+# 
+## AFTER RELEASE:
+# - instead of simple arg frame size calculation (getNumArgsStack()), implement better argument capture and interpretation - 
+#   maybe by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
+#   or hexrays decompiler prototype ?
+# - maybe some db interface for collected data + link with IDA Pro (via click)
+# - figure out why ia64 is so bizzare for stack arguments
+# - recursive function discovery + capture
+
 # IDA imports
 
 import sys
@@ -72,6 +86,7 @@ class FunCapHook(DBG_Hooks):
     # some static constants
     STRING_EXPLORATION_MIN_LENGTH = 2
     STRING_EXPLORATION_BUF_SIZE = 128
+    STRING_LENGTH_IN_COMMENTS = 64
     FUNC_COLOR = 0xF7CBEA
     ITEM_COLOR = 0x70E01B
     CALL_COLOR = 0x33FF33
@@ -251,14 +266,17 @@ class FunCapHook(DBG_Hooks):
         self.commented[ea] = True
     
     def format_normal(self, regs):
-        lines = []
+        full_ctx = []
+        cmt_ctx = []
         if self.bits == 32:
             for reg in regs:
-                lines.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                cmt_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'][:self.STRING_LENGTH_IN_COMMENTS])))
         else:
             for reg in regs:
-                lines.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
-        return (lines, lines)
+                full_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                cmt_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(reg['deref'][:self.STRING_LENGTH_IN_COMMENTS])))
+        return (full_ctx, cmt_ctx)
     
     def format_call(self, regs):
         full_ctx = []
@@ -266,8 +284,7 @@ class FunCapHook(DBG_Hooks):
         for reg in regs:
             full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
-                # we can shorten 'deref' if needed here
-                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'][:self.STRING_LENGTH_IN_COMMENTS])))
         return (full_ctx, cmt_ctx)
     
     def format_return(self, regs, saved_regs):
@@ -276,13 +293,13 @@ class FunCapHook(DBG_Hooks):
         for reg in regs:
             full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
             if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'])))
+                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(reg['deref'][:self.STRING_LENGTH_IN_COMMENTS])))
         if saved_regs:
             for reg in saved_regs:
                 if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
                     new_deref = self.smart_dereference(reg['value'], print_dots=True, hex_dump=self.hexdump)
-                    full_ctx.append("s_%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(new_deref)))
-                    cmt_ctx.append("   s_%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(new_deref)))
+                    full_ctx.append("s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(new_deref)))
+                    cmt_ctx.append("   s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(new_deref[:self.STRING_LENGTH_IN_COMMENTS])))
         return (full_ctx, cmt_ctx)
     
     def dump_regs(self, lines, outfile=None):
@@ -741,9 +758,9 @@ class AMD64CapHook(FunCapHook):
     def __init__(self, **kwargs):
         self.arch = 'amd64'
         self.bits = 64
-        self.CMT_CALL_CTX = [re.compile('rdi'), re.compile('rsi'), re.compile('rdx'), re.compile('rcx')] # we are capturing 4 args, but it can be extended 
-        self.CMT_RET_SAVED_CTX = [re.compile('rdi'), re.compile('rsi'), re.compile('rdx'), re.compile('rcx')]
-        self.CMT_RET_CTX = [re.compile('rax')]
+        self.CMT_CALL_CTX = [re.compile('RDI'), re.compile('RSI'), re.compile('RDX'), re.compile('RCX')] # we are capturing 4 args, but it can be extended 
+        self.CMT_RET_SAVED_CTX = [re.compile('RDI'), re.compile('RSI'), re.compile('RDX'), re.compile('RCX')]
+        self.CMT_RET_CTX = [re.compile('RAX')]
         FunCapHook.__init__(self, **kwargs)
     
     def isRet(self, ea):
@@ -760,7 +777,7 @@ class AMD64CapHook(FunCapHook):
         mnem = GetMnem(ea)
         return re.match('call', mnem)
         
-    def getContext(self, general_only=True, ea=None, depth=None):
+    def getContext(self, general_only=True, ea=None, depth=None, stack_offset = 1):
         '''
         Captures register states + arguments on the stack and returns it in an array
         We ask IDA for number of arguments to look on the stack
@@ -778,8 +795,8 @@ class AMD64CapHook(FunCapHook):
                 regs.append({'name': name, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})
         if ea != None or depth != None:
             if ea != None or depth != None:
-                stack = self.getStackArgs(ea, depth)
-        return regs + stack 
+                regs = regs + self.getStackArgs(ea, depth=depth, stack_offset=stack_offset)
+        return regs
     
     def getStackArgs(self, ea, depth = None, stack_offset = 1):
         '''
@@ -791,7 +808,7 @@ class AMD64CapHook(FunCapHook):
         argno = 0
         for arg in range(stack_offset, depth):
             value = DbgQword(stack+arg*8)
-            l.append({'name': "arg_" % argno, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})  
+            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})  
             argno = argno + 8
         return l
     
@@ -828,21 +845,20 @@ class AMD64CapHook(FunCapHook):
         if not ret_match:
             print "WARNING: no ret instruction found in the function body, assuming 0x0 shift"
             ret_shift = 0
-        else:
-            return ret_shift
+        return ret_shift
 
     
-class ARMCapHook(FunCapHook):
+class   ARMCapHook(FunCapHook):
     '''
-    ARM architecture. Not every feture supported yet, especially stack-based argument capturing. First 4 are registers so we capture them.
+    ARM architecture. Not every feature supported yet, especially stack-based argument capturing. First 4 are registers so we capture them.
     '''
     
     def __init__(self, **kwargs):
         self.arch = 'arm'
         self.bits = 32
-        self.CMT_CALL_CTX = [re.compile('R0'), re.compile('R1'), re.compile('R2'), re.compile('R3')] # we are capturing 4 args, but it can be extended 
-        self.CMT_RET_SAVED_CTX = [re.compile('R0'), re.compile('R1'), re.compile('R2'), re.compile('R3')]
-        self.CMT_RET_CTX = [re.compile('R0')]
+        self.CMT_CALL_CTX = [re.compile('R0$'), re.compile('R1$'), re.compile('R2$'), re.compile('R3$')] # we are capturing 4 args, but it can be extended 
+        self.CMT_RET_SAVED_CTX = [re.compile('R0$'), re.compile('R1$'), re.compile('R2$'), re.compile('R3$')]
+        self.CMT_RET_CTX = [re.compile('R0$')]
         FunCapHook.__init__(self, **kwargs)
     
     def isRet(self, ea):
@@ -869,7 +885,6 @@ class ARMCapHook(FunCapHook):
         @param ea: if not None, stack will be examined for arguments
         @depth: stack depth - if none then number of arguments is determined automatically
         '''
-        # get context for Intel and ARM architectures
         l = []        
         for x in idaapi.dbg_get_registers():
             name = x[0]
@@ -878,6 +893,10 @@ class ARMCapHook(FunCapHook):
             # don't know yet how to get the argument frame size on this arch so we don't show stack-passed arguments here
             # Still, we have first four arguments in registers R0-R4
         return l 
+    
+    # this is currently not implemented but I will look into this in the future
+    def getStackArgs(self, ea, depth = None, stack_offset = 1):
+        return []
     
     def getIP(self):
         return GetRegValue('PC')
@@ -892,7 +911,7 @@ class ARMCapHook(FunCapHook):
         '''
         Get the return address stored on the stack or register
         '''
-        return GetRegValue('LR')
+        return GetRegValue('LR') - 1
    
     def calc_ret_shift(self, ea):
         return 0 # no ret_shift here
@@ -902,6 +921,7 @@ class CallGraph(GraphViewer):
     '''
     Class to draw real function call graphs based on stack capture (not like in IDA's trace)
     It will draw all sorts of indirects calls (CALL DWORD etc.)
+    Code borrowed from MyNav project
     '''
 
     def __init__(self, title, calls, exact_offsets):
@@ -966,8 +986,7 @@ if arch == 'x86':
 elif arch == 'amd64':
     d = AMD64CapHook(outfile=outfile)
 elif arch == 'arm' and bits == 32:
-    # ARM64 not supported for the moment
-    d = ARMCapHook(outfile)
+    d = ARMCapHook(outfile=outfile)
 else:
     raise "Architecture not supported"
 
