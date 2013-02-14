@@ -27,6 +27,10 @@ So we got one fat script file now :)
 # - rewrite dbg hooks and take care of ambiguous breakpoints interpretation
 # - trampoline jump-over feature
 # - need to change the regexp registry capture definition
+# - code standards - make all functions with underscores
+# - test hexdump option and other options
+# - test graph feature
+# - no debugger exception handling
 # 
 ## AFTER RELEASE:
 # - instead of simple arg frame size calculation (getNumArgsStack()), implement better argument capture and interpretation - 
@@ -34,7 +38,7 @@ So we got one fat script file now :)
 #   or hexrays decompiler prototype ?
 # - maybe some db interface for collected data + link with IDA Pro (via click)
 # - figure out why ia64 is so bizzare for stack arguments
-# - recursive function discovery + capture
+# - recursive function discovery + capture (cool stuff...)
 
 # IDA imports
 
@@ -490,84 +494,61 @@ class FunCapHook(DBG_Hooks):
         end = idaapi.cvar.inf.maxEA
         return idaapi.next_head(ea, end)
     
-    ###
-    # debugging hooks
-    ###
+    # handlers called from within debug hooks
     
-    
-    def dbg_bpt(self, tid, ea):
-        '''
-        Callback routine called each time the breakpoint is hit
-        '''
-        
-        # TODO: recompose this. Put handlers in separate functions
-        
-        if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
-            # need to get context from within a called function
-            function_call = self.function_calls[ea]
-            ret_shift = function_call['ret_shift']
-            raw_context = self.getContext()
-            #raw_context = self.getContext(stack_offset = 0 - ret_shift, depth=function_call['num_args'] - ret_shift) # no stack here ?
-            header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (function_call['func_name'], FormatOffset(ea), ea)
-            if self.CMT_RET_SAVED_CTX:
-                sp = self.getSP()
-                sp = sp - ret_shift
-                if self.saved_contexts.has_key(sp):
-                    saved_context = self.saved_contexts[sp]
-                    del self.saved_contexts[sp]
-                else:
-                    print "WARNING: saved context not found for function %s stack pointer 0x%x" % (function_call['func_name'], sp)
-                    saved_context = None
-            else:
-                saved_context = None
-            (context_full, context_comments) = self.format_return(raw_context, saved_context)
-            DelBpt(ea) #TODO might be double deleted - this function needs to be re-written
-            
-        elif ea in Functions(): # start of a function
-            header = "Function call: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
-            raw_context= self.getContext(ea=ea)
-            if self.colors:
-                SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
-            
-            # update data for graph
-            if not self.calls_graph.has_key(ea):
-                self.calls_graph[ea] = {}
-            self.calls_graph[ea][self.return_address()] = True
-            (context_full, context_comments) = self.format_normal(raw_context)
-             
-        elif self.isRet(ea): # stopped on a ret instruction
-            function_name = GetFunctionName(ea)
-            if function_name:
-                header = "Return from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
-                raw_context = self.getContext(ea=ea)
-            else:
-                header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
-                raw_context = self.getContext(ea=ea, depth=0)
-            if self.colors:
-                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
-            
-            #TODO: make the string shorter in IDA comments (x2)
-            
-            (context_full, context_comments) = self.format_normal(raw_context)    
-                         
-        elif self.isCall(ea): # stopped on a call to a function
-            # we need to register context before step in
-            self.current_caller = { 'addr' : ea, 'ctx' : self.getContext(ea=ea, depth=0) }
+    def handle_function_end(self, ea):
+        function_name = GetFunctionName(ea)
+        if function_name:
+            header = "Return from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
+            raw_context = self.getContext(ea=ea)
+        else:
+            header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
+            raw_context = self.getContext(ea=ea, depth=0)
+        if self.colors:
+            SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+        (context_full, context_comments) = self.format_normal(raw_context)
+        if self.delete_breakpoints:
+            DelBpt(ea)
+        if self.comments and not self.commented.has_key(ea):
+            self.add_comments(ea, context_comments)
  
-            if self.colors:
-                SetColor(ea, CIC_ITEM, self.CALL_COLOR)
+        self.dump_context(header, context_full)
+    
+    def handle_return(self, ea):
+        # need to get context from within a called function
+        function_call = self.function_calls[ea]
+        ret_shift = function_call['ret_shift']
+        raw_context = self.getContext()
+        #raw_context = self.getContext(stack_offset = 0 - ret_shift, depth=function_call['num_args'] - ret_shift) # no stack here ?
+        header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (function_call['func_name'], FormatOffset(ea), ea)
+        if self.CMT_RET_SAVED_CTX:
+            sp = self.getSP()
+            sp = sp - ret_shift
+            if self.saved_contexts.has_key(sp):
+                saved_context = self.saved_contexts[sp]
+                del self.saved_contexts[sp]
+            else:
+                print "WARNING: saved context not found for function %s stack pointer 0x%x" % (function_call['func_name'], sp)
+                saved_context = None
+        else:
+            saved_context = None
+        (context_full, context_comments) = self.format_return(raw_context, saved_context)
+        if self.comments and not self.commented.has_key(ea):
+            self.add_comments(ea, context_comments)
+ 
+        self.dump_context(header, context_full)
 
-            request_step_into()
-            run_requests()
-            return 0
+    def handle_function_start(self, ea):
+        header = "Function call: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
+        raw_context= self.getContext(ea=ea)
+        if self.colors:
+            SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
         
-        else: # some other address
-            header = "Address: 0x%x" % ea
-            # no argument dumping if not function
-            raw_context = self.getContext(ea=ea, depth=self.depth)
-            (context_full, context_comments) = self.format_normal(raw_context)
-            if self.colors:
-                SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
+        # update data for graph
+        if not self.calls_graph.has_key(ea):
+            self.calls_graph[ea] = {}
+        self.calls_graph[ea][self.return_address()] = True
+        (context_full, context_comments) = self.format_normal(raw_context)
         
         if self.delete_breakpoints:
             DelBpt(ea)
@@ -575,25 +556,29 @@ class FunCapHook(DBG_Hooks):
             self.add_comments(ea, context_comments)
  
         self.dump_context(header, context_full)
+
+    def handle_generic(self, ea):
+    
+        header = "Address: 0x%x" % ea
+        # no argument dumping if not function
+        raw_context = self.getContext(ea=ea, depth=self.depth)
+        (context_full, context_comments) = self.format_normal(raw_context)
+        if self.colors:
+            SetColor(ea, CIC_ITEM, self.ITEM_COLOR)            
+        if self.comments and not self.commented.has_key(ea):
+            self.add_comments(ea, context_comments)
  
-        # disabled now for testing but will be enabled finally
-        if self.resume: ResumeProcess()
-        return 0
-        
-    def dbg_step_into(self):
-        # if we are here - means this is after single step into a call function
-        # so this must be a function (btw - we don't use our plugin with obfuscated code - unpack it yourself first!)
-        ret_addr = self.return_address()
-        if (not hasattr(self, 'current_caller')) or ret_addr != self.next_ins(self.current_caller['addr']):
-            # that's not us - return to IDA
-            #print "ret_addr: 0x%x, current_caller = 0x%x" % (ret_addr, self.current_caller['addr'])
-            self.current_caller = None
-            print "FunCap: it's not me"
-            return 0
-        
+        self.dump_context(header, context_full)
+    
+    def handle_call(self, ea):
+        self.current_caller = { 'addr' : ea, 'ctx' : self.getContext(ea=ea, depth=0) }
+ 
+        if self.colors:
+            SetColor(ea, CIC_ITEM, self.CALL_COLOR)
+    
+    def handle_after_call(self, ret_addr):
+
         ea = self.getIP()
-        
-        ### TODO: trampoline bypass (in kernel32 on Windows 7 for example)
         
         caller_ea = self.current_caller['addr']
         caller = FormatOffset(caller_ea)
@@ -638,7 +623,12 @@ class FunCapHook(DBG_Hooks):
             self.add_comments(caller_ea, context_comments)
             MakeComm(caller_ea, "%s()" % name)
     
-        AddBpt(ret_addr) # catch return from the function
+        # breakpoint already present - need to mark it
+        if CheckBpt(ea) > 0:
+            self.function_calls['user_bp'] = True
+        else:
+            self.function_calls['user_bp'] = False
+            AddBpt(ret_addr) # catch return from the function
         # hash of all call instructions (indexed by return address)
         if not self.function_calls.has_key(ret_addr):
             # determine the stack shift at ret instruction
@@ -648,8 +638,61 @@ class FunCapHook(DBG_Hooks):
             
         if self.colors:
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
-        if self.resume: ResumeProcess()    
+   
+    ###
+    # debugging hooks
+    ###
+    
+    def dbg_bpt(self, tid, ea):
+        '''
+        Callback routine called each time the breakpoint is hit
+        '''
+        if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
+            self.handle_return(ea)
+            if self.function_calls['user_bp'] == False:
+                DelBpt(ea)
+                if self.resume: ResumeProcess()
+                return 0
+                
+        if ea in Functions(): # start of a function
+            self.handle_function_start(ea)
+            
+        if self.isRet(ea): # stopped on a ret instruction
+            self.handle_function_end(ea)
+                         
+        elif self.isCall(ea): # stopped on a call to a function
+            # we need to register context before step in
+            self.handle_call(ea)
+            # requesting step_into on call instruction: don't know if this is the proper way but it works like that
+            request_step_into()
+            run_requests()
+            # we don't want ResumeProcess() to be called so we end it up here
+            if self.delete_breakpoints:
+                DelBpt(ea)
+            return 0
+        else: # not call, not ret, and not start of any function
+            self.handle_generic(ea)
         
+        if self.delete_breakpoints:
+            DelBpt(ea)
+        if self.resume: 
+            ResumeProcess()
+
+        return 0
+        
+    def dbg_step_into(self):
+        # if we are here - means this is after single step into a call function
+        # so this must be a function (btw - we don't use our plugin with obfuscated code - unpack it yourself first!)
+        ret_addr = self.return_address()
+        if hasattr(self, 'current_caller') and ret_addr == self.next_ins(self.current_caller['addr']):
+            # TODO: trampoline bypass (in kernel32 on Windows 7 for example)
+            self.handle_after_call(ret_addr)
+        else:            
+            # that's not us - return to IDA
+            self.current_caller = None
+            print "FunCap: it's not me"
+        
+        if self.resume: ResumeProcess()
         return 0
  
 # architecture-dependent classes that inherit from funcap core class
@@ -848,15 +891,16 @@ class AMD64CapHook(FunCapHook):
         return ret_shift
 
     
-class   ARMCapHook(FunCapHook):
+class ARMCapHook(FunCapHook):
     '''
-    ARM architecture. Not every feature supported yet, especially stack-based argument capturing. First 4 are registers so we capture them.
+    ARM/Thumb architecture. Not every feature supported yet, especially stack-based argument capturing.
+    First 4 args are via registers so we capture them though.
     '''
     
     def __init__(self, **kwargs):
         self.arch = 'arm'
         self.bits = 32
-        self.CMT_CALL_CTX = [re.compile('R0$'), re.compile('R1$'), re.compile('R2$'), re.compile('R3$')] # we are capturing 4 args, but it can be extended 
+        self.CMT_CALL_CTX = [re.compile('R0$'), re.compile('R1$'), re.compile('R2$'), re.compile('R3$')] 
         self.CMT_RET_SAVED_CTX = [re.compile('R0$'), re.compile('R1$'), re.compile('R2$'), re.compile('R3$')]
         self.CMT_RET_CTX = [re.compile('R0$')]
         FunCapHook.__init__(self, **kwargs)
