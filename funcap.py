@@ -24,13 +24,12 @@ So we got one fat script file now :)
 
 ### TODO LIST
 ## BEFORE RELEASE:
-# - rewrite dbg hooks and take care of ambiguous breakpoints interpretation
 # - trampoline jump-over feature
-# - need to change the regexp registry capture definition
 # - code standards - make all functions with underscores
 # - test hexdump option and other options
-# - test graph feature
-# - no debugger exception handling
+# - "no debugger exception" handling
+# - review comments and pydoc
+# - delete all breakpoints function
 # 
 ## AFTER RELEASE:
 # - instead of simple arg frame size calculation (getNumArgsStack()), implement better argument capture and interpretation - 
@@ -38,7 +37,7 @@ So we got one fat script file now :)
 #   or hexrays decompiler prototype ?
 # - maybe some db interface for collected data + link with IDA Pro (via click)
 # - figure out why ia64 is so bizzare for stack arguments
-# - recursive function discovery + capture (cool stuff...)
+# - recursive function discovery + capture - this is exciting - goes as priority one
 
 # IDA imports
 
@@ -49,13 +48,19 @@ from idc import *
 
 # utility functions
 
-# TODO test AMD64 and ARM + graphs!
+def FormatName(ea):
+    name = GetFunctionName(ea)
+    if name == "" or name == None:
+        name = "0x%x" % ea
+    return name
 
 def FormatOffset(ea):
     offset = GetFuncOffset(ea)    
     if offset == "" or offset == None:
         offset = "0x%x" % ea
     return offset
+
+# TODO: need to find better way do determine architecture ...
 
 def getArch():
     '''
@@ -80,8 +85,6 @@ def getArch():
     
     return (arch, bits)
 
-# throw it to a separate file later on
-
 class FunCapHook(DBG_Hooks):
     '''
     Main class to inherit from DBG_Hooks
@@ -95,6 +98,7 @@ class FunCapHook(DBG_Hooks):
     ITEM_COLOR = 0x70E01B
     CALL_COLOR = 0x33FF33
     BB_COLOR = 0xF3FA39
+    CMT_MAX = 5
   
     def __init__(self, **kwargs):
         '''        
@@ -116,8 +120,6 @@ class FunCapHook(DBG_Hooks):
         self.colors = kwargs.get('colors', True)
         self.output_console = kwargs.get('output_console', True)
         self.overwrite_existing = kwargs.get('output_console', False) # not implemented yet - to overwrite existing capture comments in IDA
-        
-        # TODO: need to find better way do determine architecture ...
         
         self.commented = {}
         self.currentFormatOffsets = []
@@ -217,7 +219,7 @@ class FunCapHook(DBG_Hooks):
         @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
             if disabled, only function name will be presented as node (more regular graph but less precise information)
         '''
-        CallGraph("FunCap: function calls", self.calls, exact_offsets).Show()
+        CallGraph("FunCap: function calls", self.calls_graph, exact_offsets).Show()
     
     ###                
     # END of public interface
@@ -243,10 +245,11 @@ class FunCapHook(DBG_Hooks):
         return argFrameSize / (self.bits/8)
     
     def getCaller(self):
-        '''
-        Return the formatted caller func name + its address
-        '''
-        ret = self.return_address()
+        
+        return self.prev_ins(self.return_address())
+       
+    def format_caller(self, ret):
+    
         return FormatOffset(ret) + " (0x%x)" % ret
     
     def getRegValueFromCtx(self, name, context):
@@ -255,7 +258,7 @@ class FunCapHook(DBG_Hooks):
             if reg['name'] == name:
                 return reg['value']
         
-    def add_comments(self, ea, lines):
+    def add_comments(self, ea, lines, all = False):
         '''
         Add context dump as IDA comments
         '''
@@ -267,6 +270,7 @@ class FunCapHook(DBG_Hooks):
             if ret:
                 print "idc.Eval() returned an error: %s" % ret
             idx += 1
+            if all == False and idx >= self.CMT_MAX: break
         self.commented[ea] = True
     
     def format_normal(self, regs):
@@ -494,15 +498,20 @@ class FunCapHook(DBG_Hooks):
         end = idaapi.cvar.inf.maxEA
         return idaapi.next_head(ea, end)
     
+    def prev_ins(self, ea):
+        start = idaapi.cvar.inf.minEA
+        return idaapi.prev_head(ea, start)
+    
     # handlers called from within debug hooks
     
     def handle_function_end(self, ea):
         function_name = GetFunctionName(ea)
+        caller = self.format_caller(self.getCaller())
         if function_name:
-            header = "Return from function: %s (0x%x) " % (function_name,ea) + "to " + self.getCaller()
+            header = "Return from function: %s (0x%x) " % (function_name,ea) + "to " + caller
             raw_context = self.getContext(ea=ea)
         else:
-            header = "Returning from unknown function (0x%x) " % ea + "to " + self.getCaller()
+            header = "Returning from unknown function (0x%x) " % ea + "to " + caller
             raw_context = self.getContext(ea=ea, depth=0)
         if self.colors:
             SetColor(ea, CIC_ITEM, self.ITEM_COLOR)
@@ -510,7 +519,7 @@ class FunCapHook(DBG_Hooks):
         if self.delete_breakpoints:
             DelBpt(ea)
         if self.comments and not self.commented.has_key(ea):
-            self.add_comments(ea, context_comments)
+            self.add_comments(ea, context_comments, all = True)
  
         self.dump_context(header, context_full)
     
@@ -520,18 +529,19 @@ class FunCapHook(DBG_Hooks):
         ret_shift = function_call['ret_shift']
         raw_context = self.getContext()
         #raw_context = self.getContext(stack_offset = 0 - ret_shift, depth=function_call['num_args'] - ret_shift) # no stack here ?
-        header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (function_call['func_name'], FormatOffset(ea), ea)
-        if self.CMT_RET_SAVED_CTX:
-            sp = self.getSP()
-            sp = sp - ret_shift
-            if self.saved_contexts.has_key(sp):
-                saved_context = self.saved_contexts[sp]
-                del self.saved_contexts[sp]
-            else:
-                print "WARNING: saved context not found for function %s stack pointer 0x%x" % (function_call['func_name'], sp)
-                saved_context = None
-        else:
+        
+        sp = self.getSP()
+        sp = sp - ret_shift
+        if self.saved_contexts.has_key(sp):
+            saved_context = self.saved_contexts[sp]['ctx']
+            func_name = self.saved_contexts[sp]['func_name']
+            del self.saved_contexts[sp]
+        else:    
+            func_name = function_call['func_name']
+            print "WARNING: saved context not found for stack pointer 0x%x, assuming function %s" % (sp, function_call['func_name'])
             saved_context = None
+    
+        header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (func_name, FormatOffset(ea), ea)
         (context_full, context_comments) = self.format_return(raw_context, saved_context)
         if self.comments and not self.commented.has_key(ea):
             self.add_comments(ea, context_comments)
@@ -539,7 +549,14 @@ class FunCapHook(DBG_Hooks):
         self.dump_context(header, context_full)
 
     def handle_function_start(self, ea):
-        header = "Function call: %s (0x%x) " % (GetFunctionName(ea),ea) + "called by " + self.getCaller()
+        name = GetFunctionName(ea)
+
+        caller_ea = self.getCaller()
+        caller_offset = self.format_caller(caller_ea)
+        caller_name = FormatName(caller_ea)
+
+        header = "Function call: %s (0x%x) " % (name,ea) + "called by %s" % caller_offset
+
         raw_context= self.getContext(ea=ea)
         if self.colors:
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
@@ -547,13 +564,14 @@ class FunCapHook(DBG_Hooks):
         # update data for graph
         if not self.calls_graph.has_key(ea):
             self.calls_graph[ea] = {}
-        self.calls_graph[ea][self.return_address()] = True
-        (context_full, context_comments) = self.format_normal(raw_context)
+            self.calls_graph[ea]['callers'] = []
+        self.calls_graph[ea]['callers'].append({ 'name' : caller_name, 'ea' : caller_ea, 'offset' : caller_offset })
+        self.calls_graph[ea]['name'] = name
         
-        if self.delete_breakpoints:
-            DelBpt(ea)
+        (context_full, context_comments) = self.format_normal(raw_context)
+ 
         if self.comments and not self.commented.has_key(ea):
-            self.add_comments(ea, context_comments)
+            self.add_comments(ea, context_comments, all = True)
  
         self.dump_context(header, context_full)
 
@@ -582,11 +600,7 @@ class FunCapHook(DBG_Hooks):
         
         caller_ea = self.current_caller['addr']
         caller = FormatOffset(caller_ea)
-        
-        # update data for graph
-        if not self.calls_graph.has_key(ea):
-            self.calls_graph[ea] = {}
-        self.calls_graph[ea][self.return_address()] = True
+        caller_name = FormatName(caller_ea)
 
         arguments = []
         num_args = 0
@@ -612,29 +626,33 @@ class FunCapHook(DBG_Hooks):
         raw_context = self.current_caller['ctx'] + arguments
         self.current_caller = None
        
-        # hash of all function call instances (indexed by stack frame address)
-        # we need this to update references to arguments when exiting the function
-        if self.CMT_RET_SAVED_CTX:
-            self.saved_contexts[self.getSavedSP(raw_context)] = raw_context
+        # update data for graph
+        if not self.calls_graph.has_key(ea):
+            self.calls_graph[ea] = {}
+            self.calls_graph[ea]['callers'] = []
+        self.calls_graph[ea]['callers'].append({ 'name' : caller_name, 'ea' : caller_ea, 'offset' : caller })
+        self.calls_graph[ea]['name'] = name
+                   
+        if CheckBpt(ea) > 0:
+            self.function_calls['user_bp'] = True
+        else:
+            self.function_calls['user_bp'] = False
+            AddBpt(ret_addr) # catch return from the function
+    
+        ret_shift = self.calc_ret_shift(ea)
+    
+        call_info = { 'ctx' : raw_context, 'calling_addr' : caller_ea, 'func_name' : name, \
+                    'func_addr' : ea, 'num_args' : num_args, 'ret_shift' : ret_shift}
+    
+        self.saved_contexts[self.getSavedSP(raw_context)] = call_info
+        # need this to fetch ret_shift and as a failover if no stack pointer matches during return
+        self.function_calls[ret_addr] = call_info
     
         (context_full, context_comments) = self.format_call(raw_context)
         self.dump_context(header, context_full)
         if self.comments and not self.commented.has_key(caller):
             self.add_comments(caller_ea, context_comments)
             MakeComm(caller_ea, "%s()" % name)
-    
-        # breakpoint already present - need to mark it
-        if CheckBpt(ea) > 0:
-            self.function_calls['user_bp'] = True
-        else:
-            self.function_calls['user_bp'] = False
-            AddBpt(ret_addr) # catch return from the function
-        # hash of all call instructions (indexed by return address)
-        if not self.function_calls.has_key(ret_addr):
-            # determine the stack shift at ret instruction
-            ret_shift = self.calc_ret_shift(ea)
-            self.function_calls[ret_addr] = { 'calling_addr' : caller_ea, 'ret_addr' : ret_addr, 'func_name' : name, \
-                                             'func_addr' : ea, 'num_args' : num_args, 'ret_shift' : ret_shift}
             
         if self.colors:
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
@@ -704,9 +722,10 @@ class X86CapHook(FunCapHook):
     def __init__(self, **kwargs):
         self.arch = 'x86'
         self.bits = 32
-        self.CMT_CALL_CTX = [re.compile('^arg.*')]
-        self.CMT_RET_CTX = [re.compile('EAX')]
-        self.CMT_RET_SAVED_CTX = [re.compile('^arg.*')]
+        self.CMT_CALL_CTX = [re.compile('^arg')]
+        self.CMT_RET_CTX = [re.compile('^EAX')]
+        self.CMT_RET_SAVED_CTX = [re.compile('^arg')]
+        self.CMT_MAX = 4
         FunCapHook.__init__(self, **kwargs)
     
     def isRet(self, ea):
@@ -801,9 +820,9 @@ class AMD64CapHook(FunCapHook):
     def __init__(self, **kwargs):
         self.arch = 'amd64'
         self.bits = 64
-        self.CMT_CALL_CTX = [re.compile('RDI'), re.compile('RSI'), re.compile('RDX'), re.compile('RCX')] # we are capturing 4 args, but it can be extended 
-        self.CMT_RET_SAVED_CTX = [re.compile('RDI'), re.compile('RSI'), re.compile('RDX'), re.compile('RCX')]
-        self.CMT_RET_CTX = [re.compile('RAX')]
+        self.CMT_CALL_CTX = [re.compile('^RDI'), re.compile('^RSI'), re.compile('^RDX'), re.compile('^RCX')] # we are capturing 4 args, but it can be extended 
+        self.CMT_RET_SAVED_CTX = [re.compile('^RDI'), re.compile('^RSI'), re.compile('^RDX'), re.compile('^RCX'), re.compile('^arg')]
+        self.CMT_RET_CTX = [re.compile('^RAX')]
         FunCapHook.__init__(self, **kwargs)
     
     def isRet(self, ea):
@@ -978,20 +997,21 @@ class CallGraph(GraphViewer):
         self.Clear()
         node_callers = {}
         for hit in self.calls.keys():
-            name = GetFunctionName(hit)
+            current_call = self.calls[hit]
+            name = current_call['name']
             #print "adding primary node %x" % hit 
             self.nodes[hit] = self.AddNode((hit, name))
             if not node_callers.has_key(hit):
                 node_callers[hit] = []
-            for caller in self.calls[hit].keys():
+            for caller in self.calls[hit]['callers']:
                 if self.exact_offsets == True:
-                    caller_name = FormatOffset(caller)
-                    graph_caller = caller
+                    caller_name = caller['offset']
+                    graph_caller = caller['ea']
                 else:
-                    caller_name = GetFunctionName(caller)
+                    caller_name = caller['name']
                     if not caller_name:
-                        caller_name = "0x%x" % caller
-                        graph_caller = caller
+                        caller_name = "0x%x" % caller['ea']
+                        graph_caller = caller['ea']
                     else:
                         graph_caller = LocByName(caller_name)
                 if not node_callers.has_key(graph_caller):
