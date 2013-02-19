@@ -24,12 +24,12 @@ So we got one fat script file now :)
 
 ### TODO LIST
 ## BEFORE RELEASE:
-# - trampoline jump-over feature
 # - code standards - make all functions with underscores
 # - test hexdump option and other options
 # - "no debugger exception" handling
 # - review comments and pydoc
 # - delete all breakpoints function
+# - recursive function discovery + capture - this is exciting !!!
 # 
 ## AFTER RELEASE:
 # - instead of simple arg frame size calculation (getNumArgsStack()), implement better argument capture and interpretation - 
@@ -37,7 +37,7 @@ So we got one fat script file now :)
 #   or hexrays decompiler prototype ?
 # - maybe some db interface for collected data + link with IDA Pro (via click)
 # - figure out why ia64 is so bizzare for stack arguments
-# - recursive function discovery + capture - this is exciting - goes as priority one
+
 
 # IDA imports
 
@@ -122,11 +122,12 @@ class FunCapHook(DBG_Hooks):
         self.overwrite_existing = kwargs.get('output_console', False) # not implemented yet - to overwrite existing capture comments in IDA
         
         self.commented = {}
-        self.currentFormatOffsets = []
         self.current_call = None
         self.saved_contexts = {}
         self.function_calls = {}
         self.calls_graph = {}
+        self.stub_steps = 0
+        self.stub_name = None
         DBG_Hooks.__init__(self)
         
         self.out = None
@@ -594,7 +595,7 @@ class FunCapHook(DBG_Hooks):
         if self.colors:
             SetColor(ea, CIC_ITEM, self.CALL_COLOR)
     
-    def handle_after_call(self, ret_addr):
+    def handle_after_call(self, ret_addr, stub_name):
 
         ea = self.getIP()
         
@@ -621,8 +622,13 @@ class FunCapHook(DBG_Hooks):
             arguments = self.getStackArgs(ea=ea, depth=num_args+1)
         else:
             name = "0x%x" % ea
-            
-        header = "Function call: %s to %s (0x%x)" % (caller, name, ea)
+        
+        if self.stub_name:
+            header = "Function call: %s to %s (0x%x)" % (caller, stub_name, ea) +\
+                    "\nReal function called: %s" % name    
+        else:
+            header = "Function call: %s to %s (0x%x)" % (caller, name, ea)
+        
         raw_context = self.current_caller['ctx'] + arguments
         self.current_caller = None
        
@@ -650,6 +656,11 @@ class FunCapHook(DBG_Hooks):
     
         (context_full, context_comments) = self.format_call(raw_context)
         self.dump_context(header, context_full)
+        
+        # we prefer kernel32 than kernelbase etc.
+        if self.stub_name:
+            name = self.stub_name
+        
         if self.comments and not self.commented.has_key(caller):
             self.add_comments(caller_ea, context_comments)
             MakeComm(caller_ea, "%s()" % name)
@@ -664,7 +675,8 @@ class FunCapHook(DBG_Hooks):
     def dbg_bpt(self, tid, ea):
         '''
         Callback routine called each time the breakpoint is hit
-        '''
+        '''     
+        
         if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
             self.handle_return(ea)
             if self.function_calls['user_bp'] == False:
@@ -699,12 +711,28 @@ class FunCapHook(DBG_Hooks):
         return 0
         
     def dbg_step_into(self):
-        # if we are here - means this is after single step into a call function
-        # so this must be a function (btw - we don't use our plugin with obfuscated code - unpack it yourself first!)
+        
+        # if we are currently bouncing off a stub, bounce one step further        
+        ea = self.getIP()
+            
+        if self.stub_steps > 0:
+            self.stub_steps = self.stub_steps - 1
+            request_step_into()
+            run_requests()
+            return 0
+        
+        # check if need to bounce a new stub
+        self.stub_steps = self.check_stub(ea)
+        if self.stub_steps > 0:
+            self.stub_name = Name(ea)
+            request_step_into()
+            run_requests()
+            return 0
+            
         ret_addr = self.return_address()
         if hasattr(self, 'current_caller') and ret_addr == self.next_ins(self.current_caller['addr']):
-            # TODO: trampoline bypass (in kernel32 on Windows 7 for example)
-            self.handle_after_call(ret_addr)
+            self.handle_after_call(ret_addr, self.stub_name)
+            self.stub_name = None    
         else:            
             # that's not us - return to IDA
             self.current_caller = None
@@ -770,7 +798,6 @@ class X86CapHook(FunCapHook):
         if depth == None: depth = self.getNumArgsStack(ea)+1
         argno = 0
         for arg in range(stack_offset, depth):
-            # TODO - try-catch for non readable stack (might happen in some really tricky code)
             value = DbgDword(stack+arg*4)
             l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.smart_dereference(value, print_dots=True, hex_dump=self.hexdump)})  
             argno = argno + 4
@@ -811,6 +838,24 @@ class X86CapHook(FunCapHook):
             ret_shift = 0
             
         return ret_shift
+
+    def check_stub(self, ea):
+        ## several different types stubs spotted in kernel32.dll one Windows 7 32bit, maybe others dll as well ?
+        # type 1 - simple jump to offset - need to do 1 single step
+        disasm = GetDisasm(ea)
+        if re.match('^jmp', disasm):
+            return 1
+        # type 2 - strange do-nothing-instruction chain like the below
+        # kernel32.dll:76401484 8B FF                         mov     edi, edi
+        # kernel32.dll:76401486 55                            push    ebp
+        # kernel32.dll:76401487 8B EC                         mov     ebp, esp
+        # kernel32.dll:76401489 5D                            pop     ebp
+        # kernel32.dll:7640148A E9 2D FF FF FF                jmp     sub_764013BC
+        bytes = GetManyBytes(ea, 7, use_dbg=True)
+        if bytes == "\x8b\xff\x55\x8b\xec\x5d\xe9" or bytes == "\x8b\xff\x55\x8b\xec\x5d\xeb":
+            return 5
+        # no stubs
+        return 0
 
 class AMD64CapHook(FunCapHook):
     '''
@@ -909,6 +954,13 @@ class AMD64CapHook(FunCapHook):
             ret_shift = 0
         return ret_shift
 
+    def check_stub(self, ea):
+        disasm = GetDisasm(ea)
+        # if JMP at the beginning of the function, single step it
+        if re.match('^jmp', disasm):
+            return 1
+        # no stubs
+        return 0
     
 class ARMCapHook(FunCapHook):
     '''
@@ -978,6 +1030,10 @@ class ARMCapHook(FunCapHook):
    
     def calc_ret_shift(self, ea):
         return 0 # no ret_shift here
+    
+    # don't know about stubs on this platform - worth to check
+    def check_stub(self):
+        return 0
 
     
 class CallGraph(GraphViewer):
