@@ -4,7 +4,7 @@ Created on Nov 21, 2012
 @author: deresz@gmail.com
 @version: 0.6
 
-FunCap. A script to capture function calls during debug session in IDA.
+FunCap. A script to capture function calls during a debug session in IDA.
 It is created to help quickly importing some runtime data into static IDA database to boost static analysis.
 Was meant to be multi-modular but seems IDA does not like scripts broken in several files/modules.
 So we got one fat script file now :)
@@ -27,10 +27,12 @@ So we got one fat script file now :)
 # - review comments and pydoc
 # - for user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
 # - test everything on multiple use cases, including multiple architectures and malware use cases (unpack)
-# - prepare a simple test case for Java example to send it to HexRays
+# - implement addStop() to add stop points
+# - change print to output_sth
+# - implement WARNING: cannot create function
 # 
 ## TODO LIST:
-# - strange bug that I don't know how to correct - single step and continue requests are lost sometimes (on java.exe)
+# - bug: single step and continue requests are lost sometimes (on java.exe) - confirmed and logged with hexrays
 # - instead of simple arg frame size calculation (get_num_args_stack()), implement better argument capture and interpretation - 
 #   maybe by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
 #   or hexrays decompiler prototype ?
@@ -96,7 +98,7 @@ class FunCapHook(DBG_Hooks):
     HEXMODE_LENGTH_IN_COMMENTS = 16
     FUNC_COLOR = 0xF7CBEA
     ITEM_COLOR = 0x70E01B
-    CALL_COLOR = 0x33FF33
+    CALL_COLOR = 0x99CCCC # adapt color to something more eye-striking
     BB_COLOR = 0xF3FA39
     CMT_MAX = 5
   
@@ -120,10 +122,10 @@ class FunCapHook(DBG_Hooks):
         self.colors = kwargs.get('colors', True)
         self.output_console = kwargs.get('output_console', True)
         self.overwrite_existing = kwargs.get('output_console', False)
-        self.recursive = ('recursive', False) # recursive function discovery - good for obfuscators/unpackers
-        self.recursive_aggresive = ('recursive_aggresive', False) # not sure at this point what would be better
+        self.recursive = kwargs.get('recursive', False)
+        self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
         
-        self.commented = {}
+        self.visited = []
         self.saved_contexts = {}
         self.function_calls = {}
         self.stop_points = []
@@ -197,7 +199,7 @@ class FunCapHook(DBG_Hooks):
             function pointed by the current cursor
         @param recursive: if True, the subfunction calls will also be captured
         '''
-        
+                
         if func == "screen":
             ea = ScreenEA()
             f = get_func(ea)
@@ -208,6 +210,8 @@ class FunCapHook(DBG_Hooks):
             else:
                 self.add_call_bp(start_ea, end_ea)
         elif func != "":
+            # small debug message
+            print "hooking callee: %s()" % func
             ea = LocByName(func)
             f = get_func(ea)
             start_ea = f.startEA
@@ -309,7 +313,6 @@ class FunCapHook(DBG_Hooks):
                 print "idc.Eval() returned an error: %s" % ret
             idx += 1
             if every == False and idx > self.CMT_MAX: break
-        self.commented[ea] = True
     
     def format_normal(self, regs):
         full_ctx = []
@@ -547,7 +550,8 @@ class FunCapHook(DBG_Hooks):
         (context_full, context_comments) = self.format_normal(raw_context)
         if self.delete_breakpoints:
             DelBpt(ea)
-        if self.comments and (self.overwrite_existing or not self.commented.has_key(ea)):
+        self.visited.append(ea)
+        if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
  
         self.dump_context(header, context_full)
@@ -572,7 +576,8 @@ class FunCapHook(DBG_Hooks):
     
         header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (func_name, format_offset(ea), ea)
         (context_full, context_comments) = self.format_return(raw_context, saved_context)
-        if self.comments and (self.overwrite_existing or not self.commented.has_key(ea)):
+        self.visited.append(ea)
+        if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
  
         self.dump_context(header, context_full)
@@ -599,7 +604,8 @@ class FunCapHook(DBG_Hooks):
         
         (context_full, context_comments) = self.format_normal(raw_context)
  
-        if self.comments and (self.overwrite_existing or not self.commented.has_key(ea)):
+        self.visited.append(ea)
+        if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
  
         self.dump_context(header, context_full)
@@ -612,7 +618,8 @@ class FunCapHook(DBG_Hooks):
         (context_full, context_comments) = self.format_normal(raw_context)
         if self.colors:
             SetColor(ea, CIC_ITEM, self.ITEM_COLOR)            
-        if self.comments and not self.commented.has_key(ea):
+        self.visited.append(ea)
+        if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
  
         self.dump_context(header, context_full)
@@ -623,28 +630,89 @@ class FunCapHook(DBG_Hooks):
         else:
             self.current_caller = { 'type': 'call', 'addr' : ea, 'ctx' : self.get_context(ea=ea, depth=0) }
  
+        #print "handle_call: 0x%x" % ea
         if self.colors:
             SetColor(ea, CIC_ITEM, self.CALL_COLOR)
     
     def handle_jump(self, ea):
-        self.current_caller = { 'type': 'jump', 'addr' : ea } # don't need ctx here
+        if self.current_caller:
+            self.delayed_caller = { 'type': 'jump', 'addr' : ea }
+        else:
+            self.current_caller = { 'type': 'jump', 'addr' : ea } # don't need ctx here
         
     def handle_after_jump(self, ea):
         if self.comments:
             MakeComm(self.current_caller['addr'], "0x%x" % ea)
         seg_name = SegName(ea)
-        if not isCode(GetFlags(ea)) and not self.is_system_lib(seg_name):
+        if self.code_discovery and not isCode(GetFlags(ea)) and not self.is_system_lib(seg_name):
             print "New code segment discovered: %s" % seg_name
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
             refresh_debugger_memory()
-            MakeCode(ea)
+            if not MakeCode(ea):
+                ins = DecodeInstruction(ea)
+                if ins.size:
+                    MakeUnknown(ea, ins.size, DOUNK_EXPAND)
+                    if not MakeCode(ea):
+                        print "handle_after_jump(): unable to make code at 0x%x" % ea
+            
             AnalyzeArea(start_ea, end_ea)
             self.add_call_and_jump_bp(start_ea, end_ea)
+        
+        self.current_caller = self.delayed_caller
+        self.delayed_caller = None
+    
+    def discover_function(self, ea):
+        
+        name = GetFunctionName(ea)
+        if name: return name
+        
+        need_hooking = False
+        seg_name = SegName(ea)
+        if self.code_discovery and not self.is_system_lib(seg_name) and not isCode(GetFlags(ea)):
+            need_hooking = True
+        
+        refresh_debugger_memory() # need to call this here (thx IlfakG)
+        # this should normally work for dynamic libraries
+        
+        r = MakeFunction(ea)
+        if not r:
+            # this might be dynamically created code (such as obfuscation etc.)
+            if MakeCode(ea):
+                # fine, we try again
+                r = MakeFunction(ea)
+            else:
+                # undefining also helps. Last try (thx IgorS)
+                ins = DecodeInstruction(ea)
+                if ins.size:
+                    MakeUnknown(ea, ins.size, DOUNK_EXPAND)
+                    if MakeCode(ea):
+                        # weird but worked on my example ... calling the same twice
+                        refresh_debugger_memory()
+                        r = MakeFunction(ea)
+                        refresh_debugger_memory()
+                        r = MakeFunction(ea)
+        
+        if need_hooking:
+            start_ea = SegStart(ea)
+            end_ea = SegEnd(ea)
+            refresh_debugger_memory()
+            AnalyzeArea(start_ea, end_ea)
+            self.add_call_and_jump_bp(start_ea, end_ea)
+        
+        if r:             
+            name = GetFunctionName(ea)
+            func_end = GetFunctionAttr(ea, FUNCATTR_END)
+            AnalyzeArea(ea, func_end)
+            return name
+        else:
+            return None
     
     def handle_after_call(self, ret_addr, stub_name):
-
+        
         ea = self.get_ip()
+        
+        #print "handle_after_call(): 0x%x" % ea
         
         caller_ea = self.current_caller['addr']
         caller = format_offset(caller_ea)
@@ -652,38 +720,20 @@ class FunCapHook(DBG_Hooks):
 
         arguments = []
         num_args = 0
-        name = GetFunctionName(ea)
-    
-        if not name:
-            # let's try to create a function here (works for mapped library files etc.)
-            refresh_debugger_memory() # need to call this here, thank you Ilfak !
-            r = MakeFunction(ea)
-            if(r):
-                name = GetFunctionName(ea)
-                func_end = GetFunctionAttr(ea, FUNCATTR_END)
-                AnalyzeArea(ea, func_end)
-            else:
-                name = Name(ea) # last try        
+        
+        name = self.discover_function(ea) 
+                
         if name:
             num_args = self.get_num_args_stack(ea) 
             arguments = self.get_stack_args(ea=ea, depth=num_args+1)
             seg_name = SegName(ea)
-            if self.recursive and not self.is_system_lib(seg_name) and not isCode(GetFlags(ea)):
-                if self.recursive_aggresive:
-                    start_ea = SegStart(ea)
-                    end_ea = SegEnd(ea)
-                    refresh_debugger_memory()
-                    MakeCode(ea)
-                    AnalyzeArea(start_ea, end_ea)
-                    print "New segment detected: %s(%0x, %0x)" % (seg_name, start_ea, end_ea)
-                    self.add_call_and_jump_bp(start_ea, end_ea)
-                else:
-                    print "Function in unknown segment detected: %s(%0x)" % (name, ea)
-                    self.addCaller(name)
+            if (self.recursive or self.code_discovery) and not self.is_system_lib(seg_name):
+                self.addCaller(func = name)            
         else:
             name = "0x%x" % ea
+            print "WARNING: cannot create function at %s" % name
             # TODO recursive fails if we fail to create a function here
-            # need to investigate some cases like this
+            # need to investigate - the script will fail in this case
             
         if self.stub_name:
             header = "Function call: %s to %s (0x%x)" % (caller, stub_name, ea) +\
@@ -724,7 +774,8 @@ class FunCapHook(DBG_Hooks):
         if self.stub_name:
             name = self.stub_name
         
-        if self.comments and not self.commented.has_key(caller):
+        self.visited.append(caller_ea)
+        if self.comments and (self.overwrite_existing or caller not in self.visited):
             self.add_comments(caller_ea, context_comments)
             MakeComm(caller_ea, "%s()" % name)
             
@@ -777,7 +828,7 @@ class FunCapHook(DBG_Hooks):
             if self.resume: 
                 continue_process()
         
-        elif self.is_jump(ea) and self.recursive: # only makes sense if self.recursive is on
+        elif self.is_jump(ea) and self.code_discovery: # 
             self.handle_jump(ea)
             request_step_into()
             run_requests()
@@ -811,6 +862,8 @@ class FunCapHook(DBG_Hooks):
         # if we are currently bouncing off a stub, bounce one step further        
         ea = self.get_ip()
             
+        #print "dbg_step_into(): 0x%x" % ea
+        
         if self.stub_steps > 0:
             self.stub_steps = self.stub_steps - 1
             request_step_into()
@@ -1268,8 +1321,8 @@ class Auto:
         AddBpt(stop)
         d.stop_points.append(stop)
         d.on()
-        d.recursive = True
-        d.addCJ(GetFunctionName(start))
+        d.code_discovery = True
+        d.addCJ(func = GetFunctionName(start))
         ResumeProcess()
 
 ###
