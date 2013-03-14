@@ -22,22 +22,21 @@ So we got one fat script file now :)
 # Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #
 
-### TODO LIST
 ## BEFORE RELEASE:
 # - review comments and pydoc
 # - for user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
 # - test everything on multiple use cases, including multiple architectures and malware use cases (unpack)
-# - implement addStop() to add stop points
-# - change print to output_sth
-# - implement WARNING: cannot create function
+
 # 
 ## TODO LIST:
-# - bug: single step and continue requests are lost sometimes (on java.exe) - confirmed and logged with hexrays
-# - instead of simple arg frame size calculation (get_num_args_stack()), implement better argument capture and interpretation - 
-#   maybe by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
-#   or hexrays decompiler prototype ?
-# - maybe some db interface for collected data + link with IDA Pro (via click) - big thing to implement
-# - figure out why ia64 is so bizzare for stack arguments (java 64-bit)
+# - bug: single step and continue requests are lost sometimes (tried on 32-bit java.exe v1.6.0) - confirmed and logged with hexrays.
+# - sometimes we get unexpected single steps - or even infinite loops of unexpected steps... might be related to the former bug
+# - instead of simple arg frame size calculation (get_num_args_stack()) + argument type guessing/exploration (string, int), 
+#   we need to read in function prototypes guessed by IDA (or even HexRays decompiler plugin...) and match arguments to them
+#   maybe it could be possible by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
+# - some database interface for collected data + UI plugin in IDA - so that right click on a function call in IDA will show 
+#   the table with links to different captures for that particular call. This would be really cool. 
+# - figure out why ia64 stack-based arguments are not always well captured 
 
 # IDA imports
 
@@ -59,8 +58,6 @@ def format_offset(ea):
     if offset == "" or offset == None:
         offset = "0x%x" % ea
     return offset
-
-# TODO: need to find better way do determine architecture ...
 
 def get_arch():
     '''
@@ -90,30 +87,43 @@ class FunCapHook(DBG_Hooks):
     Main class to inherit from DBG_Hooks
     '''  
 
-    # some static constants
+    ## CONSTANTS
+    # minimum length requirement to be ascii
     STRING_EXPLORATION_MIN_LENGTH = 2
-    DEREF_SIZE = 128
+    # length of discovered strings in string mode (default)
+    STRING_DEREF_SIZE = 128
+    # length of the same strings inserted in IDA code
     STRING_LENGTH_IN_COMMENTS = 64
+    # length of single-line hexdumps in hexdump mode
     HEXMODE_DEREF_SIZE = 32
+    # length of the same hexdumps inserted in IDA code 
     HEXMODE_LENGTH_IN_COMMENTS = 16
+    # visited functions will be tagged as follows
     FUNC_COLOR = 0xF7CBEA
+    # visited items (except call instructions) will be tagged as follows
     ITEM_COLOR = 0x70E01B
-    CALL_COLOR = 0x99CCCC # adapt color to something more eye-striking
-    BB_COLOR = 0xF3FA39
+    # calls will be tagged as follows
+    CALL_COLOR = 0x99CCCC
+    # maximum comment lines inserted after/before call instructions
     CMT_MAX = 5
   
     def __init__(self, **kwargs):
         '''        
-        @param outfile: log file where the output dump will be written (None = no logging)
-        @param delete_breakpoints: do we delete a breakpoint after first pass ?
-        @param hexdump: do we include hexdump in dump and in IDA comments ?
-        @param comments: do we add IDA comments on top of each function ?
-        @param resume: resume program after hitting a breakpoint ?
-        @param depth: current stack depth capture for non-function hits"
-        @param colors: do we fill all the function blocks with colors when the breakpoint hits?
-        @param nofunc_colors: do we mark breakpoints hits which are not on function start ? 
+        
+        @param outfile: log file where the output dump will be written (default: %USERPROFILE%\funcap.txt)
+        @param delete_breakpoints: do we delete a breakpoint after first pass ? (default: yes)
+        @param hexdump: do we include hexdump in dump and in IDA comments ? (default: no)
+        @param comments: do we add IDA "comments" on top of each function ? (default: yes)
+        @param resume: resume program after hitting a breakpoint ? (default: yes)
+        @param depth: current stack depth capture for non-function hits (default: 0)
+        @param colors: do we fill all the function blocks with colors when the breakpoint hits ? (default: yes)
+        @param output_console: shall we print everything to the console ? (default: yes)
+        @param overwrite_existing: are we overwriting existing capture comment in IDA when the same function is called ? (default: no)
+        @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
+        @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff (default: no)
+        
         '''
-        self.outfile = kwargs.get('outfile', None)
+        self.outfile = kwargs.get('outfile', os.path.expanduser('~') + "/funcap.txt")
         self.delete_breakpoints = kwargs.get('delete_breakpoints', True)
         self.hexdump = kwargs.get('hexdump', False)
         self.comments = kwargs.get('comments', True)
@@ -125,15 +135,15 @@ class FunCapHook(DBG_Hooks):
         self.recursive = kwargs.get('recursive', False)
         self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
         
-        self.visited = []
-        self.saved_contexts = {}
-        self.function_calls = {}
-        self.stop_points = []
-        self.calls_graph = {}
-        self.stub_steps = 0
+        self.visited = [] # functions visited already
+        self.saved_contexts = {} # saved stack contexts - to re-dereference arguments when the function exits
+        self.function_calls = {} # recorded function calls - used for several purposes
+        self.stop_points = [] # brekpoints where FunCap will pause the process to let user start the analysis
+        self.calls_graph = {} # graph nodes prepared for call graphs
+        self.stub_steps = 0 
         self.stub_name = None
-        self.current_caller = None
-        self.delayed_caller = None
+        self.current_caller = None # for single step - before-call context
+        self.delayed_caller = None # needed in case where single step lands on breakpoint (brekpoint fires first - which is bad...)
         DBG_Hooks.__init__(self)
         
         self.out = None
@@ -195,13 +205,16 @@ class FunCapHook(DBG_Hooks):
         '''
         Add breakpoints on function calls
         
+        @param jump: if True, jumps will also be hooked in addition to calls - used in code discovery mode
         @param func: this should be a function name or "screen". If given, breakpoints will only be put within this range. Screen means
-            function pointed by the current cursor
-        @param recursive: if True, the subfunction calls will also be captured
+                     function pointed by the current cursor. If null, all segments will be processed
+        
         '''
                 
         if func == "screen":
             ea = ScreenEA()
+            name = GetFunctionName(ea)
+            self.output("hooking function: %s()" % name)
             f = get_func(ea)
             start_ea = f.startEA
             end_ea = f.endEA
@@ -210,8 +223,7 @@ class FunCapHook(DBG_Hooks):
             else:
                 self.add_call_bp(start_ea, end_ea)
         elif func != "":
-            # small debug message
-            print "hooking callee: %s()" % func
+            self.output("hooking function: %s()" % func)
             ea = LocByName(func)
             f = get_func(ea)
             start_ea = f.startEA
@@ -222,7 +234,7 @@ class FunCapHook(DBG_Hooks):
                 self.add_call_bp(start_ea, end_ea)
         else:
             for seg_ea in Segments():
-                # For each of the defined elements
+                self.output("hooking segment: %s" % SegName(seg_ea))
                 start_ea = seg_ea
                 end_ea = SegEnd(seg_ea)
                 if jump:
@@ -231,6 +243,12 @@ class FunCapHook(DBG_Hooks):
                     self.add_call_bp(start_ea, end_ea)
     
     def addCJ(self, func = ""):
+        '''
+        Hook all call and jump instructions
+        
+        @param func: name of the function to hook
+        
+        '''
         self.addCaller(jump = True, func = func)
     
     def delAll(self):
@@ -246,9 +264,20 @@ class FunCapHook(DBG_Hooks):
         Draw the graph
         
         @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
-            if disabled, only function name will be presented as node (more regular graph but less precise information)
+                              if disabled, only function name will be presented as node (more regular graph but less precise information)
         '''
+        
         CallGraph("FunCap: function calls", self.calls_graph, exact_offsets).Show()
+
+    def addStop(self, ea):
+        '''
+        Add a stop point - the script will pause the process when this is reached
+        
+        @param ea: address of the new stop point to add
+        '''
+        
+        self.stop_points.append(ea)
+        AddBpt(ea)
     
     ###                
     # END of public interface
@@ -256,8 +285,12 @@ class FunCapHook(DBG_Hooks):
     
     def add_call_bp(self, start_ea, end_ea):
         '''
-        Add breakpoints on every subrountine call instruction within the scope (start_ea, end_ea)
+        Add breakpoints on every subrountine call instruction within the given scope (start_ea, end_ea)
+        
+        @param start_ea: 
+        @param end_ea: 
         '''
+        
         for head in Heads(start_ea, end_ea):
 
             # If it's an instruction
@@ -268,8 +301,13 @@ class FunCapHook(DBG_Hooks):
 
     def add_call_and_jump_bp(self, start_ea, end_ea):
         '''
-        Add breakpoints on every subrountine call instruction and jump instruction within the scope (start_ea, end_ea)
+        Add breakpoints on every subrountine call instruction and jump instruction within the given scope (start_ea, end_ea)
+        
+        @param start_ea:
+        @param end_ea:
+        
         '''
+        
         for head in Heads(start_ea, end_ea):
 
             # If it's an instruction
@@ -282,7 +320,11 @@ class FunCapHook(DBG_Hooks):
     def get_num_args_stack(self, addr):        
         '''
         Get the size of arguments frame
+        
+        @param addr: address belonging to a function
+        
         '''
+        
         argFrameSize = GetStrucSize(GetFrame(addr)) - GetFrameSize(addr) + GetFrameArgsSize(addr)
         return argFrameSize / (self.bits/8)
     
@@ -295,6 +337,12 @@ class FunCapHook(DBG_Hooks):
         return format_offset(ret) + " (0x%x)" % ret
     
     def getRegValueFromCtx(self, name, context):
+        '''
+        Extract the value of a single register from the saved context
+        
+        @param name: name of the register to extract
+        @param context: saved execution context
+        '''
         
         for reg in context:
             if reg['name'] == name:
@@ -302,61 +350,135 @@ class FunCapHook(DBG_Hooks):
         
     def add_comments(self, ea, lines, every = False):
         '''
-        Add context dump as IDA comments
+        Insert lines (let's call them "comments" although they are not) into IDA assembly listing
+        
+        @param ea: address where to insert the "comments" 
+        @param lines: array of strings to be inserted as multiple lines using ExtLinA()
+        @param every: if set to True, the maximum number of lines per address (self.CMT_MAX) will not be respected
+        
         '''
+        
         idx = 0
         for line in lines:
             # workaround with Eval() - ExtLinA() doesn't work well in idapython
             line_sanitized = line.replace('"', '\\"')
             ret = idc.Eval('ExtLinA(%d, %d, "%s");' % (ea, idx, line_sanitized))
             if ret:
-                print "idc.Eval() returned an error: %s" % ret
+                self.output("idc.Eval() returned an error: %s" % ret)
             idx += 1
             if every == False and idx > self.CMT_MAX: break
     
     def format_normal(self, regs):
+        '''
+        Returns two lists of formatted values and derefs of registers, one for console/file dump, and another for IDA comments (tha latter is less complete)
+        Used for everything besides calling and returning from function. 
+        
+        @param regs: dictionary returned by get_context() 
+        '''
+        
         full_ctx = []
         cmt_ctx = []
+        
         if self.bits == 32:
-            for reg in regs:
-                full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
-                cmt_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+            format_string = "%3s: 0x%08x --> %s"
         else:
-            for reg in regs:
-                full_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
-                cmt_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+            format_string = "%3s: 0x%016x --> %s"
+        
+        for reg in regs:
+            full_ctx.append(format_string % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+            cmt_ctx.append(format_string % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+
         return (full_ctx, cmt_ctx)
     
-    def format_call(self, regs):
+    def format_call(self, regs):        
+        '''
+        Returns two lists of formatted values and derefs of registers, one for console/file dump, and another for IDA comments
+        Used when calling a function.
+        
+        @param regs: dictionary returned by get_context() 
+        '''
+
         full_ctx = []
         cmt_ctx = []
+
+        if self.bits == 32:
+            format_string_full = "%3s: 0x%08x --> %s"
+            format_string_cmt = "   %3s: 0x%08x --> %s"
+        else:
+            format_string_full = "%3s: 0x%016x --> %s"
+            format_string_cmt = "   %3s: 0x%016x --> %s"
+
         for reg in regs:
-            full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+            full_ctx.append(format_string_full % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
-                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+                cmt_ctx.append(format_string_cmt % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
         return (full_ctx, cmt_ctx)
     
     def format_return(self, regs, saved_regs):
+        '''
+        Returns two lists of formatted values and derefs of registers, one for console/file dump, and another for IDA comments
+        Used when returning from function. 
+        
+        @param regs: dictionary returned by get_context()
+        @param saved_regs: dictionary in the format returned by get_context() 
+        '''
+
         full_ctx = []
         cmt_ctx = []
-        for reg in regs:
-            full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
-            if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-                cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
-        if saved_regs:
-            for reg in saved_regs:
-                if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
-                    new_deref = self.dereference(reg['value'], self.DEREF_SIZE)
-                    full_ctx.append("s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref))))
-                    cmt_ctx.append("   s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref, cmt = True))))
+        
+        if self.bits == 32:
+            for reg in regs:
+                full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+                if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
+                    cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+            if saved_regs:
+                for reg in saved_regs:
+                    if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
+                        new_deref = self.dereference(reg['value'], self.STRING_DEREF_SIZE)
+                        full_ctx.append("s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref))))
+                        cmt_ctx.append("   s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref, cmt = True))))
+        else:
+            for reg in regs:
+                full_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+                if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
+                    cmt_ctx.append("   %3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+            if saved_regs:
+                for reg in saved_regs:
+                    if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
+                        new_deref = self.dereference(reg['value'], self.STRING_DEREF_SIZE)
+                        full_ctx.append("s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref))))
+                        cmt_ctx.append("   s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref, cmt = True))))
+        
         return (full_ctx, cmt_ctx)
     
-    def dump_regs(self, lines, outfile=None):
-        for line in lines:
-            if outfile != None:
-                outfile.write(line + "\n")
-            else:
+    def output(self, line):
+        '''
+        Standard "print" function used across the whole script 
+        
+        @param line: line to print
+        '''
+
+        if self.outfile:
+            self.out.write(line + "\n")
+        if self.output_console:
                 print line
+        if self.outfile:
+            self.out.flush()
+    
+    def output_lines(self, lines):
+        '''
+        This prints a list, line by line
+        
+        @param lines: lines to print
+        '''
+        
+        for line in lines:
+            if self.outfile:
+                self.out.write(line + "\n")
+            if self.output_console:
+                print line
+        if self.outfile:
+            self.out.flush()
 
     # the following few functions are adopted from PaiMei by Pedram Amini
     # they are here to format and present data in a nice way
@@ -497,7 +619,7 @@ class FunCapHook(DBG_Hooks):
             if self.hexdump:
                 data = data[:self.HEXMODE_DEREF_SIZE]
             else:
-                data = data[:self.DEREF_SIZE]
+                data = data[:self.STRING_DEREF_SIZE]
         
         data_string = self.get_ascii_string(data)
 
@@ -512,31 +634,27 @@ class FunCapHook(DBG_Hooks):
 
         return data_string 
     
-    def dump_context(self, header, context_full):
-        '''
-        Dumping full execution context to file and console depending on the options
-        '''
-        if self.output_console:
-            print header
-            self.dump_regs(context_full)        
-            print
-        if self.outfile:
-            self.out.write(header + "\n")
-            self.dump_regs(context_full, self.out)
-            self.out.write("\n")
-            self.out.flush()
-    
     def next_ins(self, ea):
+        '''
+        Return next instruction to ea
+        '''
         end = idaapi.cvar.inf.maxEA
         return idaapi.next_head(ea, end)
     
     def prev_ins(self, ea):
+        '''
+        Return previous instruction to ea
+        '''
         start = idaapi.cvar.inf.minEA
         return idaapi.prev_head(ea, start)
     
     # handlers called from within debug hooks
     
     def handle_function_end(self, ea):
+        '''
+        Called when breakpoint hit on ret instruction
+        '''
+        
         function_name = GetFunctionName(ea)
         caller = self.format_caller(self.get_caller())
         if function_name:
@@ -554,9 +672,13 @@ class FunCapHook(DBG_Hooks):
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
  
-        self.dump_context(header, context_full)
+        self.output_lines([ header ] + context_full + [ "" ])
     
     def handle_return(self, ea):
+        '''
+        Called when breakpoint hit on next-to-call instruction
+        '''
+        
         # need to get context from within a called function
         function_call = self.function_calls[ea]
         ret_shift = function_call['ret_shift']
@@ -571,7 +693,7 @@ class FunCapHook(DBG_Hooks):
             del self.saved_contexts[sp]
         else:    
             func_name = function_call['func_name']
-            print "WARNING: saved context not found for stack pointer 0x%x, assuming function %s" % (sp, function_call['func_name'])
+            self.output("WARNING: saved context not found for stack pointer 0x%x, assuming function %s" % (sp, function_call['func_name']))
             saved_context = None
     
         header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (func_name, format_offset(ea), ea)
@@ -580,9 +702,13 @@ class FunCapHook(DBG_Hooks):
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
  
-        self.dump_context(header, context_full)
+        self.output_lines([ header ] + context_full + [ "" ])
 
     def handle_function_start(self, ea):
+        '''
+        Called when breakpoint hit on the beginning of a function
+        '''
+        
         name = GetFunctionName(ea)
 
         caller_ea = self.get_caller()
@@ -608,9 +734,12 @@ class FunCapHook(DBG_Hooks):
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
  
-        self.dump_context(header, context_full)
+        self.output_lines([ header ] + context_full + [ "" ])
 
     def handle_generic(self, ea):
+        '''
+        Called when breakpoint hit on anything else besides the above and below
+        '''
     
         header = "Address: 0x%x" % ea
         # no argument dumping if not function
@@ -622,9 +751,12 @@ class FunCapHook(DBG_Hooks):
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
  
-        self.dump_context(header, context_full)
+        self.output_lines([ header ] + context_full + [ "" ])
     
     def handle_call(self, ea):
+        '''
+        Called when breakpoint hit on a call instruction.
+        '''
         if self.current_caller: # delayed_caller: needed if breakpoint hits after signle step request
             self.delayed_caller = { 'type': 'call', 'addr' : ea, 'ctx' : self.get_context(ea=ea, depth=0) }
         else:
@@ -635,17 +767,23 @@ class FunCapHook(DBG_Hooks):
             SetColor(ea, CIC_ITEM, self.CALL_COLOR)
     
     def handle_jump(self, ea):
+        '''
+        Called when breakpoint hits on a jump instruction when code_discovery mode enabled
+        '''
         if self.current_caller:
             self.delayed_caller = { 'type': 'jump', 'addr' : ea }
         else:
             self.current_caller = { 'type': 'jump', 'addr' : ea } # don't need ctx here
         
     def handle_after_jump(self, ea):
+        '''
+        Called when single stepping into a jmp instruction
+        '''
         if self.comments:
             MakeComm(self.current_caller['addr'], "0x%x" % ea)
         seg_name = SegName(ea)
         if self.code_discovery and not isCode(GetFlags(ea)) and not self.is_system_lib(seg_name):
-            print "New code segment discovered: %s" % seg_name
+            self.output("New code segment discovered: %s" % seg_name)
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
             refresh_debugger_memory()
@@ -654,7 +792,7 @@ class FunCapHook(DBG_Hooks):
                 if ins.size:
                     MakeUnknown(ea, ins.size, DOUNK_EXPAND)
                     if not MakeCode(ea):
-                        print "handle_after_jump(): unable to make code at 0x%x" % ea
+                        self.output("handle_after_jump(): unable to make code at 0x%x" % ea)
             
             AnalyzeArea(start_ea, end_ea)
             self.add_call_and_jump_bp(start_ea, end_ea)
@@ -663,6 +801,9 @@ class FunCapHook(DBG_Hooks):
         self.delayed_caller = None
     
     def discover_function(self, ea):
+        '''
+        Try to get a name of a function. If function does not exists at ea, tries to create/discover it.
+        '''
         
         name = GetFunctionName(ea)
         if name: return name
@@ -709,6 +850,9 @@ class FunCapHook(DBG_Hooks):
             return None
     
     def handle_after_call(self, ret_addr, stub_name):
+        '''
+        Called when single stepping into a call instruction (lands at the beginning of a function)
+        '''
         
         ea = self.get_ip()
         
@@ -731,9 +875,12 @@ class FunCapHook(DBG_Hooks):
                 self.addCaller(func = name)            
         else:
             name = "0x%x" % ea
-            print "WARNING: cannot create function at %s" % name
-            # TODO recursive fails if we fail to create a function here
-            # need to investigate - the script will fail in this case
+            self.output("WARNING: cannot create function at %s" % name)
+            # this probably is not a real function then - handle it in a generic way
+            self.handle_generic(ea)
+            self.current_caller = self.delayed_caller
+            self.delayed_caller = None
+            return 0
             
         if self.stub_name:
             header = "Function call: %s to %s (0x%x)" % (caller, stub_name, ea) +\
@@ -768,7 +915,7 @@ class FunCapHook(DBG_Hooks):
         self.function_calls[ret_addr] = call_info
     
         (context_full, context_comments) = self.format_call(raw_context)
-        self.dump_context(header, context_full)
+        self.output_lines([ header ] + context_full + [ "" ])
         
         # we prefer kernel32 than kernelbase etc.
         if self.stub_name:
@@ -783,7 +930,13 @@ class FunCapHook(DBG_Hooks):
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
    
     def is_system_lib(self, name):
-        # covers Windows, Linux, Mac, Android, iOS
+        '''
+        Returns true if a segment belongs to a system library, in which case we don't want to recursively hook calls.
+        Covers Windows, Linux, Mac, Android, iOS
+        
+        @param name: segment name
+        '''
+       
         sysfolders = [re.compile("\\\\windows\\\\", re.I), re.compile("\\\\Program Files ", re.I), re.compile("/usr/", re.I), \
                       re.compile("/system/", re.I), re.compile("/lib/", re.I)]
         m = GetFirstModule()
@@ -807,7 +960,7 @@ class FunCapHook(DBG_Hooks):
         '''     
         
         if ea in self.stop_points:
-            print "Reached a stop point"
+            print "FunCap: reached a stop point"
             return 0
         
         if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
@@ -858,7 +1011,9 @@ class FunCapHook(DBG_Hooks):
         return 0
         
     def dbg_step_into(self):
-        
+        '''
+        Standard callback routine for stepping into.
+        '''
         # if we are currently bouncing off a stub, bounce one step further        
         ea = self.get_ip()
             
@@ -890,7 +1045,7 @@ class FunCapHook(DBG_Hooks):
                 # that's not us - return to IDA
                 self.current_caller = None
                 self.delayed_caller = None
-                if self.resume: print "FunCap: unexpected single step" # happens sometimes, dunno why
+                if self.resume: "FunCap: unexpected single step" # happens sometimes - due to a BUG in IDA. Hope one day it will be corrected
         if self.resume: 
             continue_process()
         return 0
@@ -936,16 +1091,16 @@ class X86CapHook(FunCapHook):
         Captures register states + arguments on the stack and returns it in an array
         We ask IDA for number of arguments to look on the stack
         
-        @param general_only: only general registers (names start from E or R) - only Intel arch currently
-        @param ea: if not None, stack will be examined for arguments
-        @depth: stack depth - if none then number of arguments is determined automatically
+        @param general_only: only general registers (names start from E)
+        @param ea: Address belonging to a function. If not None, stack will be examined for arguments
+        @param depth: stack depth to capture - if None then number of it is determined automatically based on number of arguments in the function frame
         '''
         regs = []        
         for x in idaapi.dbg_get_registers():
             name = x[0]
             if not general_only or (re.match("E", name) and name != 'ES'):
                 value = idc.GetRegValue(name)
-                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.DEREF_SIZE)})
+                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
         if ea != None or depth != None:
             regs = regs + self.get_stack_args(ea, depth=depth, stack_offset=stack_offset)
         return regs 
@@ -960,7 +1115,7 @@ class X86CapHook(FunCapHook):
         argno = 0
         for arg in range(stack_offset, depth):
             value = DbgDword(stack+arg*4)
-            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.DEREF_SIZE)})  
+            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})  
             argno = argno + 4
         return l
     
@@ -980,6 +1135,12 @@ class X86CapHook(FunCapHook):
         return DbgDword(GetRegValue('ESP'))
     
     def calc_ret_shift(self, ea):
+        '''
+        Calculates additional stack shift when returning from a function e.g. for 'ret 5h' it will return 5
+        
+        @param ea: address belonging to a function
+        '''
+        
         first_head = GetFunctionAttr(ea, FUNCATTR_START)
         curr_head = PrevHead(GetFunctionAttr(ea, FUNCATTR_END))
         while curr_head >= first_head:
@@ -993,15 +1154,21 @@ class X86CapHook(FunCapHook):
             if op:
                 ret_shift = int(re.sub('h$', '', op), 16)
             else:
-                ret_shift = 0           
+                ret_shift = 0           l
         if not ret_match:
-            print "WARNING: no ret instruction found in the function body, assuming 0x0 shift"
+            self.output("WARNING: no ret instruction found in the function body, assuming 0x0 shift")
             ret_shift = 0
             
         return ret_shift
 
     def check_stub(self, ea):
-        ## several different types stubs spotted in kernel32.dll one Windows 7 32bit, maybe others dll as well ?
+        '''
+        Checks if we are calling into a stub instead of a real function.
+        
+        @param ea: address to check for a stub
+        '''
+        
+        ## several different types of stubs spotted in kernel32.dll one Windows 7 32bit, maybe others dll as well ?
         # type 1 - simple jump to offset - need to do 1 single step
         disasm = GetDisasm(ea)
         if re.match('^jmp', disasm):
@@ -1015,7 +1182,7 @@ class X86CapHook(FunCapHook):
         dbytes = GetManyBytes(ea, 7, use_dbg=True)
         if dbytes == "\x8b\xff\x55\x8b\xec\x5d\xe9" or dbytes == "\x8b\xff\x55\x8b\xec\x5d\xeb":
             return 5
-        # no stubs
+        # no stubs. You can define your custom stubs here
         return 0
 
 class AMD64CapHook(FunCapHook):
@@ -1057,9 +1224,9 @@ class AMD64CapHook(FunCapHook):
         Captures register states + arguments on the stack and returns it in an array
         We ask IDA for number of arguments to look on the stack
         
-        @param general_only: only general registers (names start from E or R) - only Intel arch currently
-        @param ea: if not None, stack will be examined for arguments
-        @depth: stack depth - if none then number of arguments is determined automatically
+        @param general_only: only general registers (names start from R)
+        @param ea: Address belonging to a function. If not None, stack will be examined for arguments
+        @param depth: stack depth to capture - if None then number of it is determined automatically based on number of arguments in the function frame
         '''
         regs = []        
         
@@ -1067,7 +1234,7 @@ class AMD64CapHook(FunCapHook):
             name = x[0]
             if not general_only or (re.match("R", name) and name != 'RS'):
                 value = idc.GetRegValue(name)
-                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.DEREF_SIZE)})
+                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
         if ea != None or depth != None:
             if ea != None or depth != None:
                 regs = regs + self.get_stack_args(ea, depth=depth, stack_offset=stack_offset)
@@ -1083,7 +1250,7 @@ class AMD64CapHook(FunCapHook):
         argno = 0
         for arg in range(stack_offset, depth):
             value = DbgQword(stack+arg*8)
-            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.DEREF_SIZE)})  
+            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})  
             argno = argno + 8
         return l
     
@@ -1103,6 +1270,11 @@ class AMD64CapHook(FunCapHook):
         return DbgQword(GetRegValue('RSP'))    
     
     def calc_ret_shift(self, ea):
+        '''
+        Calculates additional stack shift when returning from a function e.g. for 'ret 5h' it will return 5
+        
+        @param ea: address belonging to a function
+        '''
         first_head = GetFunctionAttr(ea, FUNCATTR_START)
         curr_head = PrevHead(GetFunctionAttr(ea, FUNCATTR_END))
         while curr_head >= first_head:
@@ -1118,11 +1290,16 @@ class AMD64CapHook(FunCapHook):
             else:
                 ret_shift = 0           
         if not ret_match:
-            print "WARNING: no ret instruction found in the function body, assuming 0x0 shift"
+            self.output("WARNING: no ret instruction found in the function body, assuming 0x0 shift")
             ret_shift = 0
         return ret_shift
 
     def check_stub(self, ea):
+        '''
+        Checks if we are calling into a stub instead of a real function.
+        
+        @param ea: address to check for a stub
+        '''
         disasm = GetDisasm(ea)
         # if JMP at the beginning of the function, single step it
         if re.match('^jmp', disasm):
@@ -1163,6 +1340,7 @@ class ARMCapHook(FunCapHook):
         '''
         Check if we are at jump to subrouting instruction
         '''
+        
         mnem = GetMnem(ea)
         return re.match('B\s+', mnem)
   
@@ -1171,15 +1349,13 @@ class ARMCapHook(FunCapHook):
         Captures register states + arguments on the stack and returns it in an array
         We ask IDA for number of arguments to look on the stack
         
-        @param general_only: only general registers (names start from E or R) - only Intel arch currently
-        @param ea: if not None, stack will be examined for arguments
-        @depth: stack depth - if none then number of arguments is determined automatically
         '''
+        
         l = []        
         for x in idaapi.dbg_get_registers():
             name = x[0]
             value = idc.GetRegValue(name)
-            l.append({'name': name, 'value': value, 'deref': self.dereference(value, self.DEREF_SIZE)})
+            l.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
             # don't know yet how to get the argument frame size on this arch so we don't show stack-passed arguments here
             # Still, we have first four arguments in registers R0-R4
         return l 
@@ -1201,6 +1377,7 @@ class ARMCapHook(FunCapHook):
         '''
         Get the return address stored on the stack or register
         '''
+        
         return GetRegValue('LR') - 1
    
     def calc_ret_shift(self, ea):
@@ -1215,7 +1392,7 @@ class CallGraph(GraphViewer):
     '''
     Class to draw real function call graphs based on stack capture (not like in IDA's trace)
     It will draw all sorts of indirects calls (CALL DWORD etc.)
-    Code borrowed from MyNav project
+    Code borrowed from MyNav project and modified
     '''
 
     def __init__(self, title, calls, exact_offsets):
@@ -1269,57 +1446,60 @@ class CallGraph(GraphViewer):
         return "0x%x %s" % (ea, disasm)
 
 ###
-# automation scripts - these are just examples
+# automation scripts - these are just examples, only tested on win32
 # this should be in a separate file of course
 # but since IDA doesn't like it too much we leave it here
 ###
 
 class Auto:
-
+    
     def win32_call_capture(self):
+    '''
+    Runs a program and captures all "call" instructions
+    '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
         AddBpt(start)
         StartDebugger('', '', '')
         GetDebuggerEvent(WFNE_SUSP, -1);
-        print "Program entry point reached"
+        print "Auto: program entry point reached"
         DelBpt(start)
-        stop = LocByName("kernel32_ExitProcess")
-        AddBpt(stop)
-        d.stop_points.append(stop)
+        d.addStop(LocByName("kernel32_ExitProcess"))
         d.on()
         d.addCaller()
         ResumeProcess()
 
     def win32_func_capture(self):
+    '''
+    Runs a program and captures function starts and rets
+    '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
         AddBpt(start)
         StartDebugger('', '', '')
         GetDebuggerEvent(WFNE_SUSP, -1);
-        print "Program entry point reached"
+        print "Auto: program entry point reached"
         DelBpt(start)
-        stop = LocByName("kernel32_ExitProcess")
-        AddBpt(stop)
-        d.stop_points.append(stop)
+        d.addStop(LocByName("kernel32_ExitProcess"))
         d.on()
         d.addCallee()
         ResumeProcess()        
 
     def win32_code_discovery(self):
+    '''
+    Runs a program, captures all call instructions, and recursively adds new code if spotted (for obfuscator etc.)
+    '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
         AddBpt(start)
         StartDebugger('', '', '')
         GetDebuggerEvent(WFNE_SUSP, -1);
-        print "Program entry point reached"
+        print "Auto: program entry point reached"
         DelBpt(start)
-        stop = LocByName("kernel32_ExitProcess")
-        AddBpt(stop)
-        d.stop_points.append(stop)
+        d.addStop(LocByName("kernel32_ExitProcess"))
         d.on()
         d.code_discovery = True
         d.addCJ(func = GetFunctionName(start))
@@ -1343,16 +1523,14 @@ if debugger:
         d.off()    
     except: AttributeError
 
-    outfile = os.path.expanduser('~') + "/funcap.txt"
-
     if arch == 'x86':
-        d = X86CapHook(outfile=outfile)
+        d = X86CapHook()
     elif arch == 'amd64':
-        d = AMD64CapHook(outfile=outfile)
+        d = AMD64CapHook()
     elif arch == 'arm' and bits == 32:
-        d = ARMCapHook(outfile=outfile)
+        d = ARMCapHook()
     else:
-        raise "Architecture not supported"
+        raise "FunCap: architecture not supported"
 
     a = Auto()
     d.on()    
