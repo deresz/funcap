@@ -2,12 +2,12 @@
 Created on Nov 21, 2012
 
 @author: deresz@gmail.com
-@version: 0.6
+@version: 0.9
 
 FunCap. A script to capture function calls during a debug session in IDA.
 It is created to help quickly importing some runtime data into static IDA database to boost static analysis.
 Was meant to be multi-modular but seems IDA does not like scripts broken in several files/modules.
-So we got one fat script file now :)
+So we got one fat script file atm.
 
 '''
 
@@ -23,8 +23,12 @@ So we got one fat script file now :)
 #
 
 ## BEFORE RELEASE:
-# - review comments and pydoc
-# - for user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
+# - user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
+#   and that we cannot assure that everything has been well captured
+# - user guide: mention about bugs:
+#   - need to cancel "Analyze Area" if it takes too long - code analysis problem
+#   - dbg_step_into() firing in infinite loot
+#   - dbg_step_into() and dbg_bpt() not firing at all (need to press F9 to help the program to continue)
 # - test everything on multiple use cases, including multiple architectures and malware use cases (unpack)
 
 # 
@@ -121,6 +125,7 @@ class FunCapHook(DBG_Hooks):
         @param overwrite_existing: are we overwriting existing capture comment in IDA when the same function is called ? (default: no)
         @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
         @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff (default: no)
+        @param no_dll: don't capture API calls to system libraries (default: false)
         
         '''
         self.outfile = kwargs.get('outfile', os.path.expanduser('~') + "/funcap.txt")
@@ -134,12 +139,14 @@ class FunCapHook(DBG_Hooks):
         self.overwrite_existing = kwargs.get('output_console', False)
         self.recursive = kwargs.get('recursive', False)
         self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
+        self.no_dll = kwargs.get('no_dll', False)
         
         self.visited = [] # functions visited already
         self.saved_contexts = {} # saved stack contexts - to re-dereference arguments when the function exits
         self.function_calls = {} # recorded function calls - used for several purposes
         self.stop_points = [] # brekpoints where FunCap will pause the process to let user start the analysis
         self.calls_graph = {} # graph nodes prepared for call graphs
+        self.hooked = [] # functions that were already hooked with addCaller()
         self.stub_steps = 0 
         self.stub_name = None
         self.current_caller = None # for single step - before-call context
@@ -222,6 +229,7 @@ class FunCapHook(DBG_Hooks):
                 self.add_call_and_jump_bp(start_ea, end_ea)
             else:
                 self.add_call_bp(start_ea, end_ea)
+            self.hooked.append(name)
         elif func != "":
             self.output("hooking function: %s()" % func)
             ea = LocByName(func)
@@ -232,6 +240,7 @@ class FunCapHook(DBG_Hooks):
                 self.add_call_and_jump_bp(start_ea, end_ea)
             else:
                 self.add_call_bp(start_ea, end_ea)
+            self.hooked.append(func)
         else:
             for seg_ea in Segments():
                 self.output("hooking segment: %s" % SegName(seg_ea))
@@ -350,9 +359,9 @@ class FunCapHook(DBG_Hooks):
         
     def add_comments(self, ea, lines, every = False):
         '''
-        Insert lines (let's call them "comments" although they are not) into IDA assembly listing
+        Insert lines (posterior and anterior lines which are referred to as "comments" in this code) into IDA assembly listing
         
-        @param ea: address where to insert the "comments" 
+        @param ea: address where to insert the comments 
         @param lines: array of strings to be inserted as multiple lines using ExtLinA()
         @param every: if set to True, the maximum number of lines per address (self.CMT_MAX) will not be respected
         
@@ -698,10 +707,10 @@ class FunCapHook(DBG_Hooks):
     
         header = "Returning from call to %s(), execution resumed at %s (0x%x)" % (func_name, format_offset(ea), ea)
         (context_full, context_comments) = self.format_return(raw_context, saved_context)
-        self.visited.append(ea)
+        
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
- 
+        self.visited.append(ea)
         self.output_lines([ header ] + context_full + [ "" ])
 
     def handle_function_start(self, ea):
@@ -858,6 +867,14 @@ class FunCapHook(DBG_Hooks):
         
         #print "handle_after_call(): 0x%x" % ea
         
+        seg_name = SegName(ea)
+        
+        if self.no_dll and self.is_system_lib(seg_name):
+            # skipping API calls
+            self.current_caller = self.delayed_caller
+            self.delayed_caller = None
+            return 0
+        
         caller_ea = self.current_caller['addr']
         caller = format_offset(caller_ea)
         caller_name = format_name(caller_ea)
@@ -866,27 +883,33 @@ class FunCapHook(DBG_Hooks):
         num_args = 0
         
         name = self.discover_function(ea) 
+        
+        # if it's a real function (should be), capture stack-based arguments
                 
         if name:
             num_args = self.get_num_args_stack(ea) 
             arguments = self.get_stack_args(ea=ea, depth=num_args+1)
-            seg_name = SegName(ea)
-            if (self.recursive or self.code_discovery) and not self.is_system_lib(seg_name):
+            # if recursive or code_discover mode, hook the new functions with breakpoints on all calls (or jumps)
+            if (self.recursive or self.code_discovery) and not self.is_system_lib(seg_name) and name not in self.hooked:
                 self.addCaller(func = name)            
         else:
             name = "0x%x" % ea
             self.output("WARNING: cannot create function at %s" % name)
             # this probably is not a real function then - handle it in a generic way
+            self.output("Call to unknown function: 0x%x to %s" % (caller_ea,name))
             self.handle_generic(ea)
             self.current_caller = self.delayed_caller
             self.delayed_caller = None
             return 0
-            
+        
+        # if we were going through a stub, display the name that was called directly (e.g. not kernelbase but kernel32)    
         if self.stub_name:
             header = "Function call: %s to %s (0x%x)" % (caller, stub_name, ea) +\
                     "\nReal function called: %s" % name    
         else:
             header = "Function call: %s to %s (0x%x)" % (caller, name, ea)
+        
+        # link previously captured register context with stack-based arguments
         
         raw_context = self.current_caller['ctx'] + arguments
         self.current_caller = self.delayed_caller
@@ -899,33 +922,42 @@ class FunCapHook(DBG_Hooks):
         self.calls_graph[ea]['callers'].append({ 'name' : caller_name, 'ea' : caller_ea, 'offset' : caller })
         self.calls_graph[ea]['name'] = name
                    
-        if CheckBpt(ea) > 0:
-            self.function_calls['user_bp'] = True
+        if CheckBpt(ret_addr) > 0:
+            user_bp = True
         else:
-            self.function_calls['user_bp'] = False
-            AddBpt(ret_addr) # catch return from the function
+            user_bp = False
+            AddBpt(ret_addr) # catch return from the function if not user-added breakpoint
     
+        # fetch the operand for "ret" - will be needed when we will capture the return from the function
         ret_shift = self.calc_ret_shift(ea)
     
+        # this is to be able to reference to this call instance when we are returning from this function
+        # try to do it via the satck
         call_info = { 'ctx' : raw_context, 'calling_addr' : caller_ea, 'func_name' : name, \
-                    'func_addr' : ea, 'num_args' : num_args, 'ret_shift' : ret_shift}
+                    'func_addr' : ea, 'num_args' : num_args, 'ret_shift' : ret_shift, 'user_bp' : user_bp}
     
         self.saved_contexts[self.get_saved_sp(raw_context)] = call_info
-        # need this to fetch ret_shift and as a failover if no stack pointer matches during return
+        
+        # if no stack pointer matches while returning (which sometimes happends, unfortunately), try to match it via a fallback method
+        # this gives a right guess most of the time, unless some circumstances arise with multiple threads
         self.function_calls[ret_addr] = call_info
     
+        # output to the console and/or file
         (context_full, context_comments) = self.format_call(raw_context)
         self.output_lines([ header ] + context_full + [ "" ])
         
-        # we prefer kernel32 than kernelbase etc.
+        # we prefer kernel32 than kernelbase etc. - this is to bypass stubs
         if self.stub_name:
             name = self.stub_name
         
-        self.visited.append(caller_ea)
-        if self.comments and (self.overwrite_existing or caller not in self.visited):
+        # insert IDA's comments
+        if self.comments and (self.overwrite_existing or caller_ea not in self.visited):
             self.add_comments(caller_ea, context_comments)
             MakeComm(caller_ea, "%s()" % name)
-            
+        
+        # next time we don't need to insert comments (unles overwrite_existing is set)
+        self.visited.append(caller_ea)
+        
         if self.colors:
             SetColor(ea, CIC_FUNC, self.FUNC_COLOR)
    
@@ -965,7 +997,7 @@ class FunCapHook(DBG_Hooks):
         
         if ea in self.function_calls.keys(): # coming back from a call we previously stopped on
             self.handle_return(ea)
-            if self.function_calls['user_bp'] == False:
+            if self.function_calls[ea]['user_bp'] == False:
                 DelBpt(ea)
                 if self.resume:
                     continue_process()
@@ -1154,7 +1186,7 @@ class X86CapHook(FunCapHook):
             if op:
                 ret_shift = int(re.sub('h$', '', op), 16)
             else:
-                ret_shift = 0           l
+                ret_shift = 0
         if not ret_match:
             self.output("WARNING: no ret instruction found in the function body, assuming 0x0 shift")
             ret_shift = 0
@@ -1446,17 +1478,17 @@ class CallGraph(GraphViewer):
         return "0x%x %s" % (ea, disasm)
 
 ###
-# automation scripts - these are just examples, only tested on win32
+# automation scripts examples - works for win32 and win64-bit
 # this should be in a separate file of course
 # but since IDA doesn't like it too much we leave it here
 ###
 
 class Auto:
     
-    def win32_call_capture(self):
-    '''
-    Runs a program and captures all "call" instructions
-    '''
+    def win_call_capture(self):
+        '''
+        Runs a program and captures all "call" instructions
+        '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
@@ -1465,15 +1497,15 @@ class Auto:
         GetDebuggerEvent(WFNE_SUSP, -1);
         print "Auto: program entry point reached"
         DelBpt(start)
-        d.addStop(LocByName("kernel32_ExitProcess"))
+        d.addStop(LocByName("ntdll_RtlExitUserProcess"))
         d.on()
         d.addCaller()
         ResumeProcess()
 
-    def win32_func_capture(self):
-    '''
-    Runs a program and captures function starts and rets
-    '''
+    def win_func_capture(self):
+        '''
+        Runs a program and captures function starts and rets
+        '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
@@ -1482,15 +1514,15 @@ class Auto:
         GetDebuggerEvent(WFNE_SUSP, -1);
         print "Auto: program entry point reached"
         DelBpt(start)
-        d.addStop(LocByName("kernel32_ExitProcess"))
+        d.addStop(LocByName("ntdll_RtlExitUserProcess"))
         d.on()
         d.addCallee()
         ResumeProcess()        
 
-    def win32_code_discovery(self):
-    '''
-    Runs a program, captures all call instructions, and recursively adds new code if spotted (for obfuscator etc.)
-    '''
+    def win_code_discovery(self):
+        '''
+        Runs a program, captures all call instructions, and recursively adds new code if spotted (for obfuscator etc.)
+        '''
         d.off()
         d.delAll()
         start = GetEntryOrdinal(0)
@@ -1499,7 +1531,7 @@ class Auto:
         GetDebuggerEvent(WFNE_SUSP, -1);
         print "Auto: program entry point reached"
         DelBpt(start)
-        d.addStop(LocByName("kernel32_ExitProcess"))
+        d.addStop(LocByName("ntdll_RtlExitUserProcess"))
         d.on()
         d.code_discovery = True
         d.addCJ(func = GetFunctionName(start))
