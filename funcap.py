@@ -677,10 +677,11 @@ class FunCapHook(DBG_Hooks):
         (context_full, context_comments) = self.format_normal(raw_context)
         if self.delete_breakpoints:
             DelBpt(ea)
-        self.visited.append(ea)
+        
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
  
+        self.visited.append(ea)
         self.output_lines([ header ] + context_full + [ "" ])
     
     def handle_return(self, ea):
@@ -738,11 +739,13 @@ class FunCapHook(DBG_Hooks):
         self.calls_graph[ea]['name'] = name
         
         (context_full, context_comments) = self.format_normal(raw_context)
- 
-        self.visited.append(ea)
+
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments, every = True)
+        
+        self.visited.append(ea)
  
+        self.visited.append(ea)
         self.output_lines([ header ] + context_full + [ "" ])
 
     def handle_generic(self, ea):
@@ -756,10 +759,11 @@ class FunCapHook(DBG_Hooks):
         (context_full, context_comments) = self.format_normal(raw_context)
         if self.colors:
             SetColor(ea, CIC_ITEM, self.ITEM_COLOR)            
-        self.visited.append(ea)
+        
         if self.comments and (self.overwrite_existing or ea not in self.visited):
             self.add_comments(ea, context_comments)
  
+        self.visited.append(ea)
         self.output_lines([ header ] + context_full + [ "" ])
     
     def handle_call(self, ea):
@@ -1059,6 +1063,7 @@ class FunCapHook(DBG_Hooks):
         
         # check if need to bounce a new stub
         self.stub_steps = self.check_stub(ea)
+        #print "check_stub(): %x : %d" % (ea, self.stub_steps)
         if self.stub_steps > 0:
             self.stub_name = Name(ea)
             request_step_into()
@@ -1195,7 +1200,8 @@ class X86CapHook(FunCapHook):
 
     def check_stub(self, ea):
         '''
-        Checks if we are calling into a stub instead of a real function.
+        Checks if we are calling into a stub instead of a real function. Currently only supports MS compiler / Windows 7 API (like kernel32.dll)
+        There are more to implement, for example Cygwin uses different ones that are not currently supported.
         
         @param ea: address to check for a stub
         '''
