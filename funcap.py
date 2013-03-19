@@ -93,7 +93,7 @@ class FunCapHook(DBG_Hooks):
 
     ## CONSTANTS
     # minimum length requirement to be ascii
-    STRING_EXPLORATION_MIN_LENGTH = 2
+    STRING_EXPLORATION_MIN_LENGTH = 4
     # length of discovered strings in string mode (default)
     STRING_DEREF_SIZE = 128
     # length of the same strings inserted in IDA code
@@ -140,6 +140,7 @@ class FunCapHook(DBG_Hooks):
         self.recursive = kwargs.get('recursive', False)
         self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
         self.no_dll = kwargs.get('no_dll', False)
+        self.strings_file = kwargs.get('strings', os.path.expanduser('~') + "/funcap_strings.txt")
         
         self.visited = [] # functions visited already
         self.saved_contexts = {} # saved stack contexts - to re-dereference arguments when the function exits
@@ -154,6 +155,7 @@ class FunCapHook(DBG_Hooks):
         DBG_Hooks.__init__(self)
         
         self.out = None
+        self.strings_out = None
 
     ###
     # This a is public interface
@@ -167,6 +169,8 @@ class FunCapHook(DBG_Hooks):
         '''
         if self.outfile:
             self.out = open(self.outfile, 'w')
+        if self.strings_file:
+            self.strings_out = open(self.strings_file, 'w')
         self.hook()
         print "FunCap is ON"
         
@@ -214,7 +218,7 @@ class FunCapHook(DBG_Hooks):
         
         @param jump: if True, jumps will also be hooked in addition to calls - used in code discovery mode
         @param func: this should be a function name or "screen". If given, breakpoints will only be put within this range. Screen means
-                     function pointed by the current cursor. If null, all segments will be processed
+                     function pointed by the current cursor. If null, the segment that UI cursor points to will be processed
         
         '''
                 
@@ -242,14 +246,14 @@ class FunCapHook(DBG_Hooks):
                 self.add_call_bp(start_ea, end_ea)
             self.hooked.append(func)
         else:
-            for seg_ea in Segments():
-                self.output("hooking segment: %s" % SegName(seg_ea))
-                start_ea = seg_ea
-                end_ea = SegEnd(seg_ea)
-                if jump:
-                    self.add_call_and_jump_bp(start_ea, end_ea)
-                else:
-                    self.add_call_bp(start_ea, end_ea)
+            ea = ScreenEA()
+            self.output("hooking segment: %s" % SegName(ea))
+            start_ea = SegStart(ea)
+            end_ea = SegEnd(ea)
+            if jump:
+                self.add_call_and_jump_bp(start_ea, end_ea)
+            else:
+                self.add_call_bp(start_ea, end_ea)
     
     def addCJ(self, func = ""):
         '''
@@ -640,6 +644,11 @@ class FunCapHook(DBG_Hooks):
 
         if not data_string:
             data_string = self.get_printable_string(data, print_dots)
+
+        # shouldn't have been here but the idea of string dumping came out to me later on
+        if self.strings_file:
+            self.strings_out.write(self.get_printable_string(data, False) + "\n")
+            self.strings_out.flush()
 
         return data_string 
     
@@ -1422,7 +1431,7 @@ class ARMCapHook(FunCapHook):
         return 0 # no ret_shift here
     
     # don't know about stubs on this platform - worth to check
-    def check_stub(self):
+    def check_stub(self, ea):
         return 0
 
     
