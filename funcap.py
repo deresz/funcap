@@ -33,6 +33,7 @@ So we got one fat script file atm.
 
 # 
 ## TODO LIST:
+# - function call capture using PIN tracer (and other tracers) - this will just require to use dbg_trace() hook but needs to be tested
 # - bug: single step and continue requests are lost sometimes (tried on 32-bit java.exe v1.6.0) - confirmed and logged with hexrays.
 # - sometimes we get unexpected single steps - or even infinite loops of unexpected steps... might be related to the former bug
 # - instead of simple arg frame size calculation (get_num_args_stack()) + argument type guessing/exploration (string, int), 
