@@ -24,24 +24,27 @@ So we got one fat script file atm.
 
 ## BEFORE RELEASE:
 # - user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
-#   and that we cannot assure that everything has been well captured
-# - user guide: mention about bugs:
+#   and that we cannot assure that everything has been well captured [to known limitations]
+# - user guide: mention about bugs [known limitations]:
 #   - need to cancel "Analyze Area" if it takes too long - code analysis problem
 #   - dbg_step_into() firing in infinite loot
 #   - dbg_step_into() and dbg_bpt() not firing at all (need to press F9 to help the program to continue)
-# - test everything on multiple use cases, including multiple architectures and malware use cases (unpack)
 
 # 
 ## TODO LIST:
-# - function call capture using PIN tracer (and other tracers) - this will just require to use dbg_trace() hook but needs to be tested
+# - better call and ret association: build a call tree for each thread instead of current stack pointer-based hashing (this turns out not reliable).  
+# - function call capture using tracing (thinking here about PIN as only this one is fast enough)- this will just require to add option to 
+#   use dbg_trace() hook instead of dbg_bpt()/dbg_step_into() pair
 # - bug: single step and continue requests are lost sometimes (tried on 32-bit java.exe v1.6.0) - confirmed and logged with hexrays.
-# - sometimes we get unexpected single steps - or even infinite loops of unexpected steps... might be related to the former bug
-# - instead of simple arg frame size calculation (get_num_args_stack()) + argument type guessing/exploration (string, int), 
+#   We will probably have to calculate the destination jump address instead of using single stepping - it will be much more stable
+# - sometimes we get unexpected single steps - or even infinite loops of unexpected steps... might be related to the former bug. Will be elimitated
+#   by moving away from using single-stepping
+# - instead of simple arg frame size calculation (get_num_args_stack()) + argument primitive type guessing (string, int), 
 #   we need to read in function prototypes guessed by IDA (or even HexRays decompiler plugin...) and match arguments to them
 #   maybe it could be possible by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
 # - some database interface for collected data + UI plugin in IDA - so that right click on a function call in IDA will show 
 #   the table with links to different captures for that particular call. This would be really cool. 
-# - figure out why ia64 stack-based arguments are not always well captured 
+# - figure out why amd64 stack-based arguments are not always well captured 
 
 # IDA imports
 
