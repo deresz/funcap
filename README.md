@@ -68,7 +68,26 @@ To facilitate adding breakpoints, you can use this helper function:
 
 It will place breakpoints on all the call instructions in the current segment. It can also do the same for a particular function (using func='function_name' parameter). If you want to only hook one function and all the others that are called by it, set 'd.recursive' to True. There is many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions, use d.addCallee().
 
-There is also an automation class called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). For more info look into funcap.py.
+There is also an automation class called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). The below is a list parameters that can be changed from the console after loading the script: 
+
+        @param outfile: log file where the output dump will be written (default: %USERPROFILE%\funcap.txt)
+        @param delete_breakpoints: do we delete a breakpoint after first pass ? (default: yes)
+        @param hexdump: do we include hexdump in dump and in IDA comments ? (default: no)
+        @param comments: do we add IDA "comments" on top of each function ? (default: yes)
+        @param resume: resume program after hitting a breakpoint ? (default: yes)
+        @param depth: current stack depth capture for non-function hits (default: 0)
+        @param colors: do we fill all the function blocks with colors when the breakpoint hits ? (default: yes)
+        @param output_console: shall we print everything to the console ? (default: yes)
+        @param overwrite_existing: are we overwriting existing capture comment in IDA when the same function is called ? (default: no)
+        @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
+        @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff (default: no)
+        @param no_dll: don't capture API calls to system libraries (default: false)
+
+You can do it using a substitution from the console, for example:
+
+    Python>d.hex_dump = True
+
+For more info look into funcap.py.
 
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
