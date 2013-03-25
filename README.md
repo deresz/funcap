@@ -11,7 +11,7 @@ So let's look at the first example - this is how funcap inserts comments into ID
 
 ![decryption](img/decryption.png)
 
-In the above example funcap has analyzed the called function used IDA so it knows it only takes one argument - arg_00 (note: on arm architecture stack-passed arguments are not captured yet as IDA does not have the underlying info). It captures and dereferences these arguments and tries to extrapolate to ASCII. It remembers their value until the function returns and it derefernces it again - so that we see how arguments passed by references change after the call. This is captured in "s_arg_00". Return value for the function is also captured. The example shows how function decrypting strings is being automatically revealed. Not only the strings are reavealed themselves, but also the understanding of the function becomes clear without any static analysis whatsoever, so it can be directly renamed to something like "decrypt_c2". Here is another example, this time from a real malware (Taidor APT family) where the C2 server name was captured:
+In the above example funcap has analyzed the called function using IDA automatic analysis so it knows it only takes one argument - arg_00 (note: on arm architecture stack-passed arguments are not captured yet as IDA does not have the underlying info). It captures and dereferences these arguments and tries to extrapolate to ASCII. It remembers their value until the function returns and it derefernces them again - so that we see how arguments passed by references change after the call has terminated. This is captured in "s_arg_00". Return value for the function is also captured (EAX). The example shows how function decrypting strings is being automatically revealed. Not only the strings are reavealed themselves, but also the understanding of the function becomes clear without any static analysis whatsoever, so it can be directly renamed to something like "decrypt_c2". Here is another example, this time from a real malware (Taidor APT family) where the C2 server name was captured:
 
 ![taidoor](img/taidoor.png)
 
@@ -19,7 +19,7 @@ Yet another example from Taidoor - a simple decoding function that will decode t
 
 ![taidoor_svchost](img/taidoor_svchost.png)
   
-funcap will also capture library calls if told so. Library function will also be analysed on the fly to determine its number of arguments. Take a look at this example:
+funcap will also capture library calls if told so (does it by default). A library function will also be analysed on the fly to determine its number of arguments. Take a look at this example:
 
 ![move_file](img/move_file.png)
 
@@ -27,50 +27,48 @@ We see how the malware is being installed from a temporary location to persisten
 
 ![be2_api_resolver](img/be2_api_resolver.png)
 
-We see that the second indirect call 'call eax' is calling VirtualAlloc(). This is also an information added by funcap. But we see as well that the first function (sub_40BAD9) takes two arguments where the first argument seems to be a beginning of a PE file (starts with MZ) and the second one looks like a random value which might be an API name hash (hell knows why it was succesfully referenced here - isn't an address starting with '0xa' a part of kernel memory ??). But this shows how funcap speeds up static analysis. Another small useful feature is that funcap will insert real function addressed which is especially important in case of indirect calls:
+We see that the second indirect call 'call eax' is calling VirtualAlloc(). This is also an information added by funcap. But we see as well that the first function (sub_40BAD9) takes two arguments where the first argument seems to be a beginning of a PE file (starts with MZ - it is an address of memory-mapped kernel32.dll) and the second one looks like a random value which might be an API name hash (hell knows why it was succesfully referenced here - isn't an address starting with '0xa' a part of kernel memory ??). But this shows how funcap speeds up static analysis. Another small useful feature is that funcap will insert real function address which is especially important in case of indirect calls:
 
 ![call_rax](img/call_rax.png)
 ![call_ecx](img/call_ecx.png)
 
-Funcap contains mechanisms of discovering new functions that were not present in IDA's database (code_discovery mode). This is interesting in case of packed/obfuscated code. The below example shows how a call to previously unkown function was registered by funcap:
+Funcap contains mechanisms of discovering new functions that were not present in IDA's database (code_discovery mode - not enabled by default). This is interesting in case of packed/obfuscated code. The below example shows how a call to previously unkown function was registered by funcap:
 
 ![call_to_unknown](img/call_to_unknown.png)
 
-funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working. I'm really convinced that when I add PIN tracer support this will be much better (although PIN is limited to x86/amd64 user mode only).
+funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. I'm really convinced that when I add PIN tracer support this will be much better (although PIN is limited to x86/amd64 user mode only).
 
-All calls are also logged by default to the console and to a file (by default %USERPROFILE%\funcap.txt or ~/funcap.txt) as you can see on the last example:
+All calls are also logged by default to the console and to a file (by default %USERPROFILE%\funcap.txt or ~/funcap.txt) as you can see on the following example:
 
 ![console](img/console.png)
 
-File and console dumps contain more info than comments pasted into IDA and will also contain multiple passes of the same call instruction (if delete_breakpoints option is set to False). For obvious reason, IDA's comments contain only the first pass of a given call instruction. Note: the long-term development plan would be to make a right-click feature on the call to select amongst multiple recorded call instances bit this requires a lot of work - and a kind of database.
+File and console dumps contain more info than comments pasted into IDA and will also contain multiple passes of the same call instruction (if delete_breakpoints option is set to False). For obvious reason, IDA's comments contain only the first pass of a given call instruction. Note: the long-term development plan would be to make a right-click feature on the call to select amongst multiple recorded call instances but this requires a lot of work - and a kind of database.
 
-Last but not least, funcap can draw a graph of function calls. The graph is similar to IDA's trace graph but has two important differences: no trace needs to be used (means speeed) and more importantly - it is fully dynamic. IDA trace graph will not connect anything like 'call eax' beacause it only browses current xrefs that are present in the IDB. funcap graph has this working properly.
+Last but not least, funcap can draw a graph of function calls. The graph is similar to IDA's trace graph but has two important advantages: no trace needs to be used (means speeed) and more importantly - it is fully dynamic. IDA trace graph will not connect anything like 'call eax' beacause it only iterates over xrefs that are present in the IDB. funcap graph has this working properly.
 
 ![graph](img/graph.png)
 
-funcap takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to percorming a 'strings' command on function arguments which can also be quite handy.
+funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured.
 
 _How to use_
 
-The principle is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the main class 'd'. To turn the script off and on:
+The usage is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the main class 'd'. To turn the script off and on:
 
-Python>d.off()
-FunCap is OFF
-Python>d.on()
-FunCap is ON
+    Python>d.off()
+    FunCap is OFF
+    Python>d.on()
+    FunCap is ON
 
-You can now add breakpoints on any part in the code and during the execution it will be interpreted depending on the instruction or code context. E.g. call instructions will be logged as function calls and return from the call will also be automatically recorded. If the instruction is spotted at the beginning or at the end of a function, full registry and arguments will be captured and pasted into the listing (start and end of function is the only place where we can fit a lot of info as it will make reading the code difficult). Jump instruction will get their destination resolved as well as call instructions. On any other instruction a generic context capture is performed.
+You can now add breakpoints on any part in the code and during the execution it will be interpreted depending on the instruction or code context. Call instructions will be logged as function calls and return from the call will also be automatically recorded. If the instruction is spotted at the beginning or at the end of a function, full registry and arguments will be captured and pasted into the listing (start and end of function is the only place where we can fit a lot of info as it will not make reading the code difficult in this case). Jump instruction will get their destination resolved as well as call instructions. On any other instruction a generic context capture is performed.
 
 To facilitate adding breakpoints, you can use this helper function:
 
-Python>d.addCaller()
-hooking segment: .text
+    Python>d.addCaller()
+    hooking segment: .text
 
-It will place breakpoints on all the call instructions in the current segments. It can also do the same for a particular function ('func' parameter). If you want to only hook one function and all the others that are called by it, set 'd.recursive' to True. There is many other options available (such as hexdump, code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions, use d.addCallee().
+It will place breakpoints on all the call instructions in the current segment. It can also do the same for a particular function (using func='function_name' parameter). If you want to only hook one function and all the others that are called by it, set 'd.recursive' to True. There is many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions, use d.addCallee().
 
-There is also an automation class called 'a' that can be used to run a program, hook functions and stop just before the program exits (to have all the debug segments left for examination before their disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code).
-
-For more info look into funcap.py.
+There is also an automation class called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). For more info look into funcap.py.
 
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
