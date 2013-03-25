@@ -11,11 +11,11 @@ So let's look at the first example - this is how funcap inserts comments into ID
 
 ![decryption](img/decryption.png)
 
-In the above example funcap has analyzed the called function used IDA so it knows it only takes one argument - arg_00 (note: on arm architecture stack-passed arguments are not captured yet as IDA does not have the underlying info). It captures and dereferences these arguments and tries to extrapolate to ASCII. It remembers their value until the function returns and it derefernces it again - so that we see how arguments passed by references change after the call. This is captured in "s_arg_00". Return value for the function is also captured. The example shows how function decrypting strings is being automatically revealed. Not only the strings are reavealed themselves, but also the understanding of the function becomes clear without any static analysis whatsoever, so it can be directly renamed to something like "decrypt_c2". Here is another example, this time from a real malware (Taidor APT family):
+In the above example funcap has analyzed the called function used IDA so it knows it only takes one argument - arg_00 (note: on arm architecture stack-passed arguments are not captured yet as IDA does not have the underlying info). It captures and dereferences these arguments and tries to extrapolate to ASCII. It remembers their value until the function returns and it derefernces it again - so that we see how arguments passed by references change after the call. This is captured in "s_arg_00". Return value for the function is also captured. The example shows how function decrypting strings is being automatically revealed. Not only the strings are reavealed themselves, but also the understanding of the function becomes clear without any static analysis whatsoever, so it can be directly renamed to something like "decrypt_c2". Here is another example, this time from a real malware (Taidor APT family) where the C2 server name was captured:
 
 ![taidoor](img/taidoor.png)
 
-Another example from Taidoor - a simple decoding function that will decode the name of the process to which the code will be injected. Note that the pointer to the decrypted string is being returned via EAX in this case. This example is quite usefull as Taidoor encryps body of some functions using RC4 so it further complicates and slows down static analysis:
+Yet another example from Taidoor - a simple decoding function that will decode the name of the process to which the code will be injected. Note that the pointer to the decrypted string is being returned via EAX in this case. This example is quite usefull as Taidoor encryps body of some functions using RC4 so it further complicates and slows down static analysis:
 
 ![taidoor_svchost](img/taidoor_svchost.png)
   
@@ -42,7 +42,7 @@ All calls are also logged by default to the console and to a file (by default %U
 
 ![console](img/console.png)
 
-File and console dump contains more info than comments pasted into IDA and will also contain multiple passes of the same call instruction (if delete_breakpoints option is set to False). For obvious reason, IDA's comment contains only the first pass of a given call instruction.
+File and console dumps contain more info than comments pasted into IDA and will also contain multiple passes of the same call instruction (if delete_breakpoints option is set to False). For obvious reason, IDA's comments contain only the first pass of a given call instruction. Note: the long-term development plan would be to make a right-click feature on the call to select amongst multiple recorded call instances bit this requires a lot of work - and a kind of database.
 
 Last but not least, funcap can draw a graph of function calls. The graph is similar to IDA's trace graph but has two important differences: no trace needs to be used (means speeed) and more importantly - it is fully dynamic. IDA trace graph will not connect anything like 'call eax' beacause it only browses current xrefs that are present in the IDB. funcap graph has this working properly.
 
