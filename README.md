@@ -36,7 +36,7 @@ Funcap contains mechanisms of discovering new functions that were not present in
 
 ![call_to_unknown](img/call_to_unknown.png)
 
-funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. I'm really convinced that when I add PIN tracer support this will be much better (although PIN is limited to x86/amd64 user mode only).
+funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. 
 
 All calls are also logged by default to the console and to a file (by default %USERPROFILE%\funcap.txt or ~/funcap.txt) as you can see on the following example:
 
@@ -72,5 +72,5 @@ There is also an automation class called 'a' that can be used to run a Windows u
 
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
-- "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls (seems it's IDA bug as well) if not it lasts very long
+- "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls (seems it's IDA bug as well), if not it lasts very long
 - on ARM - there is no stack-based arguments passing capture - IDA does not seem to give needed info regarding the stack frame. 4 register based args are captured, though, which makes it for most of the functions

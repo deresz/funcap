@@ -22,19 +22,15 @@ So we got one fat script file atm.
 # Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #
 
-## BEFORE RELEASE:
-# - user guide: mention that full arg in registry capturing can be achieved (like for Delphi code - need to check this out)
-#   and that we cannot assure that everything has been well captured [to known limitations]
-# - user guide: mention about bugs [known limitations]:
-#   - need to cancel "Analyze Area" if it takes too long - code analysis problem
-#   - dbg_step_into() firing in infinite loot
-#   - dbg_step_into() and dbg_bpt() not firing at all (need to press F9 to help the program to continue)
+## BUGS:
+#  - need to cancel "Analyze Area" if it takes too long - code analysis problem in IDA ?     
+#  - dbg_step_into() firing in infinite loot
+#  - dbg_step_into() and dbg_bpt() not firing at all (need to press F9 to help the program to continue)
 
 # 
 ## TODO LIST:
 # - better call and ret association: build a call tree for each thread instead of current stack pointer-based hashing (this turns out not reliable).  
-# - function call capture using tracing (thinking here about PIN as only this one is fast enough)- this will just require to add option to 
-#   use dbg_trace() hook instead of dbg_bpt()/dbg_step_into() pair
+# - function call capture using tracing (thinking here about PIN as only this one is fast enough)
 # - bug: single step and continue requests are lost sometimes (tried on 32-bit java.exe v1.6.0) - confirmed and logged with hexrays.
 #   We will probably have to calculate the destination jump address instead of using single stepping - it will be much more stable
 # - sometimes we get unexpected single steps - or even infinite loops of unexpected steps... might be related to the former bug. Will be elimitated
@@ -44,7 +40,7 @@ So we got one fat script file atm.
 #   maybe it could be possible by getting some info from underlying debugger symbols via WinDbg/GDB, IDA pro static arg list analysis 
 # - some database interface for collected data + UI plugin in IDA - so that right click on a function call in IDA will show 
 #   the table with links to different captures for that particular call. This would be really cool. 
-# - figure out why amd64 stack-based arguments are not always well captured 
+# - amd64 stack-based arguments are not always well captured 
 
 # IDA imports
 
