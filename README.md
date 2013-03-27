@@ -36,7 +36,7 @@ Funcap contains mechanisms of discovering new functions that were not present in
 
 ![call_to_unknown](img/call_to_unknown.png)
 
-funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. 
+funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. To make it work beeter it would be cool to implement funcap as a PIN tool but this obviously requires some C development effort.
 
 All calls are also logged by default to the console and to a file (by default %USERPROFILE%\funcap.txt or ~/funcap.txt) as you can see on the following example:
 
@@ -48,7 +48,7 @@ Last but not least, funcap can draw a graph of function calls. The graph is simi
 
 ![graph](img/graph.png)
 
-funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured.
+funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than 'strings'command run on a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured.
 
 _How to use_
 
