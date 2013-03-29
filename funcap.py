@@ -88,7 +88,7 @@ def get_arch():
 
 class FunCapHook(DBG_Hooks):
     '''
-    Main class to inherit from DBG_Hooks
+    Main class to implementing DBG_Hooks
     '''  
 
     ## CONSTANTS
@@ -115,17 +115,18 @@ class FunCapHook(DBG_Hooks):
         '''        
         
         @param outfile: log file where the output dump will be written (default: %USERPROFILE%\funcap.txt)
-        @param delete_breakpoints: do we delete a breakpoint after first pass ? (default: yes)
-        @param hexdump: do we include hexdump in dump and in IDA comments ? (default: no)
-        @param comments: do we add IDA "comments" on top of each function ? (default: yes)
+        @param delete_breakpoints: delete a breakpoint after first pass ? (default: yes)
+        @param hexdump: include hexdump instead of ascii in outfile and IDA comments ? (default: no)
+        @param comments: add IDA comments ? (default: yes)
         @param resume: resume program after hitting a breakpoint ? (default: yes)
         @param depth: current stack depth capture for non-function hits (default: 0)
-        @param colors: do we fill all the function blocks with colors when the breakpoint hits ? (default: yes)
-        @param output_console: shall we print everything to the console ? (default: yes)
-        @param overwrite_existing: are we overwriting existing capture comment in IDA when the same function is called ? (default: no)
+        @param colors: mark the passage with colors ? (default: yes)
+        @param output_console: print everything to the console ? (default: yes)
+        @param overwrite_existing: overwrite existing capture comment in IDA when the same function is called ? (default: no)
         @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
-        @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff (default: no)
-        @param no_dll: don't capture API calls to system libraries (default: false)
+        @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff like that (default: no)
+        @param no_dll: disable API calls capturing (default: no)
+        @param strings_file: file containing strings dump on captured function arguments (default: %USERPROFILE%\funcap_strings.txt)
         
         '''
         self.outfile = kwargs.get('outfile', os.path.expanduser('~') + "/funcap.txt")

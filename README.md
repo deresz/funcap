@@ -44,7 +44,7 @@ All calls are also logged by default to the console and to a file (by default %U
 
 File and console dumps contain more info than comments pasted into IDA and will also contain multiple passes of the same call instruction (if delete_breakpoints option is set to False). For obvious reason, IDA's comments contain only the first pass of a given call instruction. Note: the long-term development plan would be to make a right-click feature on the call to select amongst multiple recorded call instances but this requires a lot of work - and a kind of database.
 
-Last but not least, funcap can draw a graph of function calls. The graph is similar to IDA's trace graph but has two important advantages: no trace needs to be used (means speeed) and more importantly - it is fully dynamic. IDA trace graph will not connect anything like 'call eax' beacause it only iterates over xrefs that are present in the IDB. funcap graph has this working properly.
+Last but not least, funcap can draw a graph of function calls. The graph is similar to IDA's trace graph but has two important advantages: no trace needs to be used (means speed) and more importantly - it is fully dynamic. IDA trace graph will not connect anything like 'call eax' beacause it only iterates over xrefs that are present in the IDB. funcap graph has this working properly.
 
 ![graph](img/graph.png)
 
@@ -52,38 +52,59 @@ funcap also takes a dump of all string arguments to a file (by defualt %USERPROF
 
 _How to use_
 
-The usage is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the main class 'd'. To turn the script off and on:
+The usage is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the object 'd'. To turn the script off and on:
 
     Python>d.off()
     FunCap is OFF
     Python>d.on()
     FunCap is ON
 
-You can now add breakpoints on any part in the code and during the execution it will be interpreted depending on the instruction or code context. Call instructions will be logged as function calls and return from the call will also be automatically recorded. If the instruction is spotted at the beginning or at the end of a function, full registry and arguments will be captured and pasted into the listing (start and end of function is the only place where we can fit a lot of info as it will not make reading the code difficult in this case). Jump instruction will get their destination resolved as well as call instructions. On any other instruction a generic context capture is performed.
+You can now add breakpoints on any part in the code and during the execution it will be interpreted depending on the instruction or code context. Call instructions will be logged as function calls and return from the call will also be automatically recorded. If the instruction is spotted at the beginning or at the end of a function, all registers and stack-based arguments will be captured and pasted into the listing (start and end of function is the only place where we can fit a lot of info as it will not make reading the code difficult in this case). Jump instruction will get their destination resolved as well as call instructions. On any other instruction a generic context capture is performed (just register dump).
 
 To facilitate adding breakpoints, you can use this helper function:
 
     Python>d.addCaller()
     hooking segment: .text
 
-It will place breakpoints on all the call instructions in the current segment. It can also do the same for a particular function (using func='function_name' parameter). If you want to only hook one function and all the others that are called by it, set 'd.recursive' to True. There is many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions, use d.addCallee().
+It will place breakpoints on all the call instructions in the current segment. It can also do the same for a particular function (using func='function_name' parameter). If you want to only hook one function + functions that are called by it, set 'd.recursive' to True. There are many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions, use d.addCallee().
 
-There is also an automation class called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). The below is a list parameters that can be changed from the console after loading the script: 
+There is more methods to interface with the "public interface" of object d, of which the most useful are:
+  
+    delAll(self):
+        Delete all breakpoints
+        
+    graph(self, exact_offsets = False):
+        Draw the graph
+        
+        @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
+                              if disabled, only function name will be presented as node (more regular graph but less precise information)
+
+    addStop(self, ea):
+        Add a stop point - the script will pause the process when this is reached
+        
+        @param ea: address of the new stop point to add
+
+	addCJ(self, func = ""):
+        Hook all call and jump instructions
+        
+        @param func: name of the function to hook     
+        
+There is also an automation object called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). The below is a list of parameters that can be changed from the console after loading the script or during the class instantiantion: 
 
     @param outfile: log file where the output dump will be written (default: %USERPROFILE%\funcap.txt)
-    @param delete_breakpoints: do we delete a breakpoint after first pass ? (default: yes)
-    @param hexdump: do we include hexdump in dump and in IDA comments ? (default: no)
-    @param comments: do we add IDA "comments" on top of each function ? (default: yes)
+    @param delete_breakpoints: delete a breakpoint after first pass ? (default: yes)
+    @param hexdump: include hexdump instead of ascii in outfile and IDA comments ? (default: no)
+    @param comments: add IDA comments ? (default: yes)
     @param resume: resume program after hitting a breakpoint ? (default: yes)
     @param depth: current stack depth capture for non-function hits (default: 0)
-    @param colors: do we fill all the function blocks with colors when the breakpoint hits ? (default: yes)
-    @param output_console: shall we print everything to the console ? (default: yes)
-    @param overwrite_existing: are we overwriting existing capture comment in IDA when the same function is called ? (default: no)
+    @param colors: mark the passage with colors ? (default: yes)
+    @param output_console: print everything to the console ? (default: yes)
+    @param overwrite_existing: overwrite existing capture comment in IDA when the same function is called ? (default: no)
     @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
-    @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff (default: no)
-    @param no_dll: don't capture API calls to system libraries (default: false)
-
-You can do it using a substitution from the console, for example:
+    @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff like that (default: no)
+    @param no_dll: disable API calls capturing (default: no)
+    @param strings_file: file containing strings dump on captured function arguments (default: %USERPROFILE%\funcap_strings.txt)
+You can change any parameter using a substitution from the console, for example:
 
     Python>d.hex_dump = True
 
@@ -92,4 +113,4 @@ For more info look into funcap.py.
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
 - "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls (seems it's IDA bug as well), if not it lasts very long
-- on ARM - there is no stack-based arguments passing capture - IDA does not seem to give needed info regarding the stack frame. 4 register based args are captured, though, which makes it for most of the functions
+- on ARM - there is no stack-based arguments capture - IDA does not seem to give needed info regarding the stack frame. 4 register based args are captured, though, which makes it for most of the functions
