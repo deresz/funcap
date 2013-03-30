@@ -148,7 +148,7 @@ class FunCapHook(DBG_Hooks):
         self.function_calls = {} # recorded function calls - used for several purposes
         self.stop_points = [] # brekpoints where FunCap will pause the process to let user start the analysis
         self.calls_graph = {} # graph nodes prepared for call graphs
-        self.hooked = [] # functions that were already hooked with addCaller()
+        self.hooked = [] # functions that were already hooked
         self.stub_steps = 0 
         self.stub_name = None
         self.current_caller = None # for single step - before-call context
@@ -213,48 +213,59 @@ class FunCapHook(DBG_Hooks):
         self.addFuncStart()
         self.addFuncRet()
         
-    def addCaller(self, jump = False, func = ""):
+    def hookFunc(self, jump = False, func = ""):
         '''
-        Add breakpoints on function calls
+        Add breakpoints on call instructions within a function
         
-        @param jump: if True, jumps will also be hooked in addition to calls - used in code discovery mode
-        @param func: this should be a function name or "screen". If given, breakpoints will only be put within this range. Screen means
-                     function pointed by the current cursor. If null, the segment that UI cursor points to will be processed
+        @param jump: if True, jump instructions will also be hooked in addition to calls - used in code discovery mode
+        @param func: this should be a function name. If null, the function that UI cursor points to will be processed
         
         '''
-                
-        if func == "screen":
-            ea = ScreenEA()
-            name = GetFunctionName(ea)
-            self.output("hooking function: %s()" % name)
-            f = get_func(ea)
-            start_ea = f.startEA
-            end_ea = f.endEA
-            if jump:
-                self.add_call_and_jump_bp(start_ea, end_ea)
-            else:
-                self.add_call_bp(start_ea, end_ea)
-            self.hooked.append(name)
-        elif func != "":
-            self.output("hooking function: %s()" % func)
+        
+        if func:
             ea = LocByName(func)
-            f = get_func(ea)
-            start_ea = f.startEA
-            end_ea = f.endEA
-            if jump:
-                self.add_call_and_jump_bp(start_ea, end_ea)
-            else:
-                self.add_call_bp(start_ea, end_ea)
-            self.hooked.append(func)
         else:
             ea = ScreenEA()
-            self.output("hooking segment: %s" % SegName(ea))
-            start_ea = SegStart(ea)
-            end_ea = SegEnd(ea)
-            if jump:
-                self.add_call_and_jump_bp(start_ea, end_ea)
-            else:
-                self.add_call_bp(start_ea, end_ea)
+            func = GetFunctionName(ea)        
+        
+        self.output("hooking function: %s()" % func)
+        
+        f = get_func(ea)
+        start_ea = f.startEA
+        end_ea = f.endEA
+        if jump:
+            self.add_call_and_jump_bp(start_ea, end_ea)
+        else:
+            self.add_call_bp(start_ea, end_ea)
+        self.hooked.append(func)
+    
+    def hookSeg(self, seg = "", jump = False):
+        '''
+        Add breakpoints on call instructions within a given segment
+        
+        @param jump: if True, jump instructions will also be hooked in addition to calls - used in code discovery mode
+        @param seg: this should be a segment name. If null, the segment that UI cursor points to will be processed
+        '''
+        
+        if seg:
+            ea = None
+            for s in Segments():
+                if seg == SegName(s): 
+                    ea = s
+                    break
+        
+            if ea == None:
+                self.output("WARNING: cannot hook segment %s" % seg)
+                return
+        else:
+            ea = ScreenEA()
+        self.output("hooking segment: %s" % seg)
+        start_ea = SegStart(ea)
+        end_ea = SegEnd(ea)
+        if jump:
+            self.add_call_and_jump_bp(start_ea, end_ea)
+        else:
+            self.add_call_bp(start_ea, end_ea)      
     
     def addCJ(self, func = ""):
         '''
@@ -263,7 +274,7 @@ class FunCapHook(DBG_Hooks):
         @param func: name of the function to hook
         
         '''
-        self.addCaller(jump = True, func = func)
+        self.hookFunc(jump = True, func = func)
     
     def delAll(self):
         '''
@@ -905,7 +916,7 @@ class FunCapHook(DBG_Hooks):
             arguments = self.get_stack_args(ea=ea, depth=num_args+1)
             # if recursive or code_discover mode, hook the new functions with breakpoints on all calls (or jumps)
             if (self.recursive or self.code_discovery) and not self.is_system_lib(seg_name) and name not in self.hooked:
-                self.addCaller(func = name)            
+                self.hookFunc(func = name)            
         else:
             name = "0x%x" % ea
             self.output("WARNING: cannot create function at %s" % name)
@@ -1005,6 +1016,8 @@ class FunCapHook(DBG_Hooks):
         Callback routine called each time the breakpoint is hit
         '''     
         
+        is_func_start = False
+        
         if ea in self.stop_points:
             print "FunCap: reached a stop point"
             return 0
@@ -1019,6 +1032,7 @@ class FunCapHook(DBG_Hooks):
                 
         if ea in Functions(): # start of a function
             self.handle_function_start(ea)
+            is_func_start = True
             if self.resume: 
                 continue_process()
             
@@ -1047,7 +1061,8 @@ class FunCapHook(DBG_Hooks):
             return 0
                     
         else: # not call, not ret, and not start of any function
-            self.handle_generic(ea)
+            if not is_func_start:
+                self.handle_generic(ea)
         
         if self.resume: 
             continue_process()
@@ -1509,13 +1524,14 @@ class Auto:
         d.delAll()
         start = GetEntryOrdinal(0)
         AddBpt(start)
+        segname = SegName(start)
         StartDebugger('', '', '')
         GetDebuggerEvent(WFNE_SUSP, -1);
         print "Auto: program entry point reached"
         DelBpt(start)
         d.addStop(LocByName("ntdll_RtlExitUserProcess"))
         d.on()
-        d.addCaller()
+        d.hookSeg(seg = segname)
         ResumeProcess()
 
     def win_func_capture(self):
