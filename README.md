@@ -113,7 +113,11 @@ You can change any parameter using a substitution from the console, for example:
 
     Python>d.hex_dump = True
 
-For more info look into funcap.py. There is also an automation object called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). This class shows how you can use funcap and how you can write additional automation scripts.
+For more info look into funcap.py. There is also an automation object called 'a' that can be used to run a Windows user mode program, hook functions and stop just before the program exits (to have all the debug segments left for examination before they disappear). It implements three automation routines: a.win_call_capture(), a.win_func_capture() and a.win_code_discovery() (the last one is useful when the code is packed/obfuscated and creates dynamic code). This class shows how you can use funcap and how you can write additional automation scripts. For example:
+
+	Python>a.win_call_capture()
+
+This will read the entry point, hook the segment where the entry point has been found, run the application with function call capture and stop it just before it exits.
 
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa

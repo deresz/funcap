@@ -994,6 +994,10 @@ class FunCapHook(DBG_Hooks):
         @param name: segment name
         '''
        
+        # the below is for Windows kernel debugging
+        if name == 'nt':
+            return True
+       
         sysfolders = [re.compile("\\\\windows\\\\", re.I), re.compile("\\\\Program Files ", re.I), re.compile("/usr/", re.I), \
                       re.compile("/system/", re.I), re.compile("/lib/", re.I)]
         m = GetFirstModule()
