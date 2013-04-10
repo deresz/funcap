@@ -410,8 +410,8 @@ class FunCapHook(DBG_Hooks):
             format_string = "%3s: 0x%016x --> %s"
         
         for reg in regs:
-            full_ctx.append(format_string % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
-            cmt_ctx.append(format_string % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+            full_ctx.append(format_string % (reg['name'], reg['value'], self.smart_format(reg['deref'])))
+            cmt_ctx.append(format_string % (reg['name'], reg['value'], self.smart_format_cmt(reg['deref'])))
 
         return (full_ctx, cmt_ctx)
     
@@ -434,10 +434,12 @@ class FunCapHook(DBG_Hooks):
             format_string_cmt = "   %3s: 0x%016x --> %s"
 
         for reg in regs:
-            full_ctx.append(format_string_full % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+            full_ctx.append(format_string_full % (reg['name'], reg['value'], self.smart_format(reg['deref'])))
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
-                cmt_ctx.append(format_string_cmt % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+                cmt_ctx.append(format_string_cmt % (reg['name'], reg['value'], self.smart_format_cmt(reg['deref'])))
+                                        
         return (full_ctx, cmt_ctx)
+
     
     def format_return(self, regs, saved_regs):
         '''
@@ -453,26 +455,26 @@ class FunCapHook(DBG_Hooks):
         
         if self.bits == 32:
             for reg in regs:
-                full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+                full_ctx.append("%3s: 0x%08x --> %s" % (reg['name'], reg['value'], self.smart_format(reg['deref'])))
                 if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-                    cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+                    cmt_ctx.append("   %3s: 0x%08x --> %s" % (reg['name'], reg['value'], self.smart_format_cmt(reg['deref'])))
             if saved_regs:
                 for reg in saved_regs:
                     if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
-                        new_deref = self.dereference(reg['value'], self.STRING_DEREF_SIZE)
-                        full_ctx.append("s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref))))
-                        cmt_ctx.append("   s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref, cmt = True))))
+                        new_deref = self.dereference(reg['value'], 2 * self.STRING_DEREF_SIZE) # 2 x for unicode
+                        full_ctx.append("s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], self.smart_format(new_deref)))
+                        cmt_ctx.append("   s_%s: 0x%08x --> %s" % (reg['name'], reg['value'], self.smart_format_cmt(new_deref)))
         else:
             for reg in regs:
-                full_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref']))))
+                full_ctx.append("%3s: 0x%016x --> %s" % (reg['name'], reg['value'], self.smart_format(reg['deref'])))
                 if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-                    cmt_ctx.append("   %3s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(reg['deref'], cmt = True))))
+                    cmt_ctx.append("   %3s: 0x%016x --> %s" % (reg['name'], reg['value'], self.smart_format_cmt(reg['deref'])))
             if saved_regs:
                 for reg in saved_regs:
                     if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
-                        new_deref = self.dereference(reg['value'], self.STRING_DEREF_SIZE)
-                        full_ctx.append("s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref))))
-                        cmt_ctx.append("   s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], repr(self.smart_format(new_deref, cmt = True))))
+                        new_deref = self.dereference(reg['value'], 2 * self.STRING_DEREF_SIZE)
+                        full_ctx.append("s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], self.smart_format(new_deref)))
+                        cmt_ctx.append("   s_%s: 0x%016x --> %s" % (reg['name'], reg['value'], self.smart_format_cmt(new_deref)))
         
         return (full_ctx, cmt_ctx)
     
@@ -614,42 +616,35 @@ class FunCapHook(DBG_Hooks):
     def dereference(self, address, size):
         return GetManyBytes(address, size, use_dbg=True)
  
-    def smart_format(self, data, cmt = False, print_dots=True):    
+    def smart_format(self, raw_data, print_dots=True):    
         '''
         "Intelligently" discover data behind an address. The address is dereferenced and explored in search of an ASCII
         or Unicode string. In the absense of a string the printable characters are returned with non-printables
         represented as dots (.). The location of the discovered data is returned as well as either "heap", "stack" or
         the name of the module it lies in (global data).
 
-        @type  address:    DWORD
-        @param address:    Address to smart dereference
+        @param raw_data:    Binary data to format
         @type  print_dots: Bool
         @param print_dots: (Optional, def:True) Controls suppression of dot in place of non-printable
-        @type  hex_dump:   Bool
-        @param hex_dump:   (Optional, def=False) Return a hex dump in the absense of string detection
 
         @rtype:  String
         @return: String of data discovered behind dereference.
         '''
         
-        if not data:
+        if not raw_data:
             return 'N/A'
         
-        if cmt:
-            if self.hexdump:
-                data = data[:self.HEXMODE_LENGTH_IN_COMMENTS]
-            else:
-                data = data[:self.STRING_LENGTH_IN_COMMENTS]
+        try_unicode = raw_data[:self.STRING_DEREF_SIZE * 2]
+        try_ascii = raw_data[:self.STRING_DEREF_SIZE]
+        if self.hexdump:
+            data = raw_data[:self.HEXMODE_DEREF_SIZE]
         else:
-            if self.hexdump:
-                data = data[:self.HEXMODE_DEREF_SIZE]
-            else:
-                data = data[:self.STRING_DEREF_SIZE]
+            data = raw_data[:self.STRING_DEREF_SIZE]
         
-        data_string = self.get_ascii_string(data)
+        data_string = self.get_ascii_string(try_ascii)
 
         if not data_string:
-            data_string = self.get_unicode_string(data)
+            data_string = self.get_unicode_string(try_unicode)
 
         if not data_string and self.hexdump:
             data_string = self.hex_dump(data)
@@ -658,12 +653,41 @@ class FunCapHook(DBG_Hooks):
             data_string = self.get_printable_string(data, print_dots)
 
         # shouldn't have been here but the idea of string dumping came out to me later on
+        # TODO: re-implement. We could also take much longer strings
         if self.strings_file:
-            self.strings_out.write(self.get_printable_string(data, False) + "\n")
+            self.strings_out.write(self.get_printable_string(raw_data, False) + "\n")
             self.strings_out.flush()
 
         return data_string 
-    
+
+    def smart_format_cmt(self, raw_data, print_dots=True):    
+        '''
+        Same as smart_format() but for IDA comments
+        '''
+        
+        if not raw_data:
+            return 'N/A'
+        
+        try_unicode = raw_data[:self.STRING_LENGTH_IN_COMMENTS * 2]
+        try_ascii = raw_data[:self.STRING_LENGTH_IN_COMMENTS]
+        if self.hexdump:
+            data = raw_data[:self.HEXMODE_LENGTH_IN_COMMENTS]
+        else:
+            data = raw_data[:self.STRING_LENGTH_IN_COMMENTS]
+                
+        data_string = self.get_ascii_string(try_ascii)
+
+        if not data_string:
+            data_string = self.get_unicode_string(try_unicode)
+
+        if not data_string and self.hexdump:
+            data_string = self.hex_dump(data)
+
+        if not data_string:
+            data_string = self.get_printable_string(data, print_dots)
+
+        return repr(data_string).strip("'") 
+  
     def next_ins(self, ea):
         '''
         Return next instruction to ea
@@ -768,6 +792,7 @@ class FunCapHook(DBG_Hooks):
  
         self.visited.append(ea)
         self.output_lines([ header ] + context_full + [ "" ])
+
 
     def handle_generic(self, ea):
         '''
@@ -1166,7 +1191,7 @@ class X86CapHook(FunCapHook):
             name = x[0]
             if not general_only or (re.match("E", name) and name != 'ES'):
                 value = idc.GetRegValue(name)
-                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
+                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, 2 * self.STRING_DEREF_SIZE)})
         if ea != None or depth != None:
             regs = regs + self.get_stack_args(ea, depth=depth, stack_offset=stack_offset)
         return regs 
@@ -1181,7 +1206,7 @@ class X86CapHook(FunCapHook):
         argno = 0
         for arg in range(stack_offset, depth):
             value = DbgDword(stack+arg*4)
-            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})  
+            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, 2 * self.STRING_DEREF_SIZE)})  
             argno = argno + 4
         return l
     
@@ -1301,7 +1326,7 @@ class AMD64CapHook(FunCapHook):
             name = x[0]
             if not general_only or (re.match("R", name) and name != 'RS'):
                 value = idc.GetRegValue(name)
-                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
+                regs.append({'name': name, 'value': value, 'deref': self.dereference(value, 2 * self.STRING_DEREF_SIZE)})
         if ea != None or depth != None:
             if ea != None or depth != None:
                 regs = regs + self.get_stack_args(ea, depth=depth, stack_offset=stack_offset)
@@ -1317,7 +1342,7 @@ class AMD64CapHook(FunCapHook):
         argno = 0
         for arg in range(stack_offset, depth):
             value = DbgQword(stack+arg*8)
-            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})  
+            l.append({'name': "arg_%02x" % argno, 'value': value, 'deref': self.dereference(value, 2 * self.STRING_DEREF_SIZE)})  
             argno = argno + 8
         return l
     
@@ -1422,7 +1447,7 @@ class ARMCapHook(FunCapHook):
         for x in idaapi.dbg_get_registers():
             name = x[0]
             value = idc.GetRegValue(name)
-            l.append({'name': name, 'value': value, 'deref': self.dereference(value, self.STRING_DEREF_SIZE)})
+            l.append({'name': name, 'value': value, 'deref': self.dereference(value, 2 * self.STRING_DEREF_SIZE)})
             # don't know yet how to get the argument frame size on this arch so we don't show stack-passed arguments here
             # Still, we have first four arguments in registers R0-R4
         return l 
