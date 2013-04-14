@@ -1500,10 +1500,10 @@ class CallGraph(GraphViewer):
             current_call = self.calls[hit]
             name = current_call['name']
             #print "adding primary node %x" % hit 
-            self.nodes[hit] = self.AddNode((hit, name))
             if not node_callers.has_key(hit):
                 node_callers[hit] = []
-            for caller in self.calls[hit]['callers']:
+                self.nodes[hit] = self.AddNode((hit, name))
+            for caller in self.calls[hit]['callers']: 
                 if self.exact_offsets == True:
                     caller_name = caller['offset']
                     graph_caller = caller['ea']
@@ -1514,13 +1514,15 @@ class CallGraph(GraphViewer):
                         graph_caller = caller['ea']
                     else:
                         graph_caller = LocByName(caller_name)
+                        print "graph_caller: %x" % graph_caller
                 if not node_callers.has_key(graph_caller):
                     #print "adding node %x" % caller
                     self.nodes[graph_caller] = self.AddNode((graph_caller, caller_name))
                     node_callers[graph_caller] = []
-                if not graph_caller in node_callers[hit]:
-                    #print "adding edge for %x --> %x" % (caller, hit)
+                if not graph_caller in node_callers[hit]:                    
+                    print "adding edge for %x --> %x" % (graph_caller, hit) 
                     self.AddEdge(self.nodes[graph_caller], self.nodes[hit])
+                    node_callers[hit].append(graph_caller)
         return True
 
     def OnGetText(self, node_id):
