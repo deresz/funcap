@@ -119,6 +119,19 @@ For more info look into funcap.py. There is also an automation object called 'a'
 
 This will read the entry point, hook the segment where the entry point has been found, run the application with function call capture and stop it just before it exits.
 
+There is also some configuration items that can be changed by modifying the script body. Example: say your program is using a register to pass arguments in addition to the stack, like for example MS x86 compiler does by using ECX in case of C++ code to pass the "this" pointer, and you want to see this register in your IDA comments after funcap has been run. In the class corresponding to your architecture you can modify these lines:
+
+    self.CMT_CALL_CTX = [re.compile('^arg')]
+    self.CMT_RET_CTX = [re.compile('^EAX')]
+    self.CMT_RET_SAVED_CTX = [re.compile('^arg')]
+
+To look like:
+
+    self.CMT_CALL_CTX = [re.compile('^arg'), re.compile('^ECX')]
+    self.CMT_RET_CTX = [re.compile('^EAX')]
+    self.CMT_RET_SAVED_CTX = [re.compile('^arg'), re.compile('^ECX')]
+
+
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
 - "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls (seems it's IDA bug as well), if not it lasts very long
