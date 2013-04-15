@@ -48,8 +48,8 @@ Last but not least, funcap can draw a graph of function calls. The graph is simi
 
 ![graph](img/graph.png)
 
-funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than 'strings'command run on a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured.
-
+funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than 'strings'command run on a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured. 
+    
 _How to use_
 
 The usage is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the object 'd'. To turn the script off and on:
@@ -68,29 +68,41 @@ To facilitate adding breakpoints, you can use this helper function:
 
 It will place breakpoints on all the call instructions in the current segment. If you use the seg='segment_name' it will do the same for a specified segment. If you want to add breakpoints on call instruction in the currently displayed function use this:
 
-	Python>d.hookFunc()
-	hooking function: WinMain() 
+    Python>d.hookFunc()
+    hooking function: WinMain() 
 
-You can also do the same for a particular function (using func='function_name' parameter). If you want that all the called function be dynamically hooked as well, set 'd.recursive' to True. There are many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions and have more info from registers in IDA listings but only first spotted call for a particular function captured, use d.addCallee().
+You can also do the same for a particular function using func='function_name' parameter, like this:
+
+    Python>d.hookFunc(func="myfunc")
+    hooking function: myfunc() 
+
+If you want that all the called function be dynamically hooked as well, type 'd.recursive = True'. There are many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions and have more info from registers in IDA listings but only first spotted call for a particular function captured, use d.addCallee().
+
+To draw a graph type:
+
+    Python>d.graph()
+
+Unfortunately graph is not saved in the IDB file. To save the graph you can use the 'pickle' module like this:
+
+    Python>import pickle
+    Python>pickle.dump(d.calls_graph, open("my_sample.graph", "w"))
+
+To load a graph after loading your IDB file type:
+
+    Python>d.calls_graph = pickle.load(open("my_sample.graph", "r"))
 
 There is more methods to interface with the "public interface" of object d, of which the most useful are:
   
     delAll(self):
         Delete all breakpoints
-        
-    graph(self, exact_offsets = False):
-        Draw the graph
-        
-        @param exact_offsets: if enabled each function call with offset(e.g. function+0x12) will be treated as graph node
-                              if disabled, only function name will be presented as node (more regular graph but less precise information)
 
     addStop(self, ea):
         Add a stop point - the script will pause the process when this is reached
         
         @param ea: address of the new stop point to add
 
-	addCJ(self, func = ""):
-        Hook all call and jump instructions
+    addCJ(self, func = ""):
+        Hook noth call and jump instructions
         
         @param func: name of the function to hook     
         
@@ -109,6 +121,7 @@ The below is a list of parameters that can be changed from the console after loa
     @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff like that (default: no)
     @param no_dll: disable API calls capturing (default: no)
     @param strings_file: file containing strings dump on captured function arguments (default: %USERPROFILE%\funcap_strings.txt)
+
 You can change any parameter using a substitution from the console, for example:
 
     Python>d.hex_dump = True
@@ -131,6 +144,7 @@ To look like:
     self.CMT_RET_CTX = [re.compile('^EAX')]
     self.CMT_RET_SAVED_CTX = [re.compile('^arg'), re.compile('^ECX')]
 
+If you happen to use funcap with WinDbg (I am using it to debug Windows kernel mode code), use "Script command" from File menu as the console is being taken over by WINDBG prompt during the debugging session.
 
 _Known limitations_
 - problems with dbg_step_into() in IDA pro - observing random misbehavior sometimes, e.g. single step does not trigger where it should or vice versa
