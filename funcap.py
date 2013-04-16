@@ -1514,13 +1514,13 @@ class CallGraph(GraphViewer):
                         graph_caller = caller['ea']
                     else:
                         graph_caller = LocByName(caller_name)
-                        print "graph_caller: %x" % graph_caller
+                        #print "graph_caller: %x" % graph_caller
                 if not node_callers.has_key(graph_caller):
                     #print "adding node %x" % caller
                     self.nodes[graph_caller] = self.AddNode((graph_caller, caller_name))
                     node_callers[graph_caller] = []
                 if not graph_caller in node_callers[hit]:                    
-                    print "adding edge for %x --> %x" % (graph_caller, hit) 
+                    #print "adding edge for %x --> %x" % (graph_caller, hit) 
                     self.AddEdge(self.nodes[graph_caller], self.nodes[hit])
                     node_callers[hit].append(graph_caller)
         return True
