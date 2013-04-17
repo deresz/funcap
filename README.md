@@ -32,11 +32,15 @@ We see that the second indirect call 'call eax' is calling VirtualAlloc(). This 
 ![call_rax](img/call_rax.png)
 ![call_ecx](img/call_ecx.png)
 
-Funcap contains mechanisms of discovering new functions that were not present in IDA's database (code_discovery mode - not enabled by default). This is interesting in case of packed/obfuscated code. The below example shows how a call to previously unkown function was registered by funcap:
+Funcap contains mechanisms of discovering new functions that were not present in IDA's database This mode is not enabled by default, you can set with the following:
 
-![call_to_unknown](img/call_to_unknown.png)
+    Python>d.code_discovery = True
 
-funcap should be able to analyze this new segment/function and store in IDA's database automatically but this isn't always working as some of the int 3 breakpoint hooks mess up with the dynamically created code. To make it work beeter it would be cool to implement funcap as a PIN tool but this obviously requires some C development effort.
+This is interesting in case of packed/obfuscated code. The below example shows how function calls in decrypted unkown code segment were registered by funcap:
+
+![call_to_unknown](img/code_discovery.png)
+
+funcap should be able to analyze this new deobfuscated segment/function. Moreover, it should be able to capture function calls in such a segment. As you can see on the above screenshot the API calls in the newly discovered code segment are being called with the use of EBP as a base register. funcap reveals which API function is called as well as provides the argument it was called with. The analyst can instantly realize that the malware in the above example is just installing itself in the system to make itself persistent across reboot. NOTE: to be able to do static analysis of such a segment after your debugging session has been ended, you need to take a memory snapshot in IDA (Debug menu). You need to do it _before_ the process ends (or before the new segment is overwriten as some very clever malwares do this). You can add a stop point at kernel32_ExitProcess, or you can use a.win_code_discovery() automation function (see later in this README). There are cases where funcap can mess up with the dynamic segments because of the use of classic int 3 inline breakpoints but this could usually be tracked down and the interfering breakpoints can be removed. Also be aware of the anti-debug tricks such as calculating the checksum over the decryptor stub. To make it work beter it would be cool to implement funcap as a PIN tool but this obviously requires some C development effort (and there are more challenges to that - btw, take a minute to have look at an interesting project which also approaches this problem, http://code.google.com/p/malwasm/).
 
 All calls are also logged by default to the console and to a file (by default %USERPROFILE%\funcap.txt or ~/funcap.txt) as you can see on the following example:
 
