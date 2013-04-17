@@ -259,6 +259,7 @@ class FunCapHook(DBG_Hooks):
                 return
         else:
             ea = ScreenEA()
+            seg = SegName(ea)
         self.output("hooking segment: %s" % seg)
         start_ea = SegStart(ea)
         end_ea = SegEnd(ea)
