@@ -1562,6 +1562,7 @@ class Auto:
         print "Auto: program entry point reached"
         DelBpt(start)
         d.addStop(LocByName("ntdll_RtlExitUserProcess"))
+        d.addStop(LocByName("kernel32_ExitProcess"))
         d.on()
         d.hookSeg(seg = segname)
         ResumeProcess()
@@ -1579,6 +1580,7 @@ class Auto:
         print "Auto: program entry point reached"
         DelBpt(start)
         d.addStop(LocByName("ntdll_RtlExitUserProcess"))
+        d.addStop(LocByName("kernel32_ExitProcess"))
         d.on()
         d.addCallee()
         ResumeProcess()        
@@ -1595,7 +1597,8 @@ class Auto:
         GetDebuggerEvent(WFNE_SUSP, -1);
         print "Auto: program entry point reached"
         DelBpt(start)
-        d.addStop(LocByName("ntdll_RtlExitUserProcess"))
+        d.addStop(LocByName("kernel32_ExitProcess")) # last breakpoint before the process terminates, to give a chance to take a memory snapshot
+        d.addStop(LocByName("ntdll_RtlExitUserProcess")) # to be sure we add 2 possibilities, there is probably more ...
         d.on()
         d.code_discovery = True
         d.addCJ(func = GetFunctionName(start))
