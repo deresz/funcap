@@ -1046,6 +1046,8 @@ class FunCapHook(DBG_Hooks):
         Callback routine called each time the breakpoint is hit
         '''     
         
+        #print "dbg_bpt(): 0x%x" % ea
+        
         is_func_start = False
         
         if ea in self.stop_points:
@@ -1118,9 +1120,10 @@ class FunCapHook(DBG_Hooks):
         
         # check if need to bounce a new stub
         self.stub_steps = self.check_stub(ea)
-        #print "check_stub(): %x : %d" % (ea, self.stub_steps)
+        # print "check_stub(): %x : %d" % (ea, self.stub_steps)
         if self.stub_steps > 0:
             self.stub_name = Name(ea)
+            self.stub_steps = self.stub_steps - 1
             request_step_into()
             run_requests()
             return 0
@@ -1393,6 +1396,7 @@ class AMD64CapHook(FunCapHook):
         
         @param ea: address to check for a stub
         '''
+ 
         disasm = GetDisasm(ea)
         # if JMP at the beginning of the function, single step it
         if re.match('^jmp', disasm):
