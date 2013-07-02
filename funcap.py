@@ -1502,8 +1502,9 @@ class CallGraph(GraphViewer):
         self.Clear()
         node_callers = {}
         for hit in self.calls.keys():
-            current_call = self.calls[hit]
-            name = current_call['name']
+            #current_call = self.calls[hit]
+            name = GetFunctionName(hit)
+            #name = current_call['name']
             #print "adding primary node %x" % hit 
             if not node_callers.has_key(hit):
                 node_callers[hit] = []
@@ -1513,7 +1514,8 @@ class CallGraph(GraphViewer):
                     caller_name = caller['offset']
                     graph_caller = caller['ea']
                 else:
-                    caller_name = caller['name']
+                    caller_name = GetFunctionName(caller['ea'])
+                    #caller_name = caller['name']
                     if not caller_name:
                         caller_name = "0x%x" % caller['ea']
                         graph_caller = caller['ea']
