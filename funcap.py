@@ -1059,19 +1059,16 @@ class FunCapHook(DBG_Hooks):
             if self.function_calls[ea]['user_bp'] == False:
                 DelBpt(ea)
                 if self.resume:
-                    continue_process()
+                    request_continue_process()
+                    run_requests()
                 return 0
                 
         if ea in Functions(): # start of a function
             self.handle_function_start(ea)
             is_func_start = True
-            if self.resume: 
-                continue_process()
             
         if self.is_ret(ea): # stopped on a ret instruction
             self.handle_function_end(ea)
-            if self.resume: 
-                continue_process()
         
         elif self.is_jump(ea) and self.code_discovery: # 
             self.handle_jump(ea)
@@ -1096,10 +1093,11 @@ class FunCapHook(DBG_Hooks):
             if not is_func_start:
                 self.handle_generic(ea)
         
-        if self.resume: 
-            continue_process()
         if self.delete_breakpoints:
             DelBpt(ea)
+        if self.resume: 
+            request_continue_process()
+            run_requests()
         
         return 0
         
@@ -1133,6 +1131,7 @@ class FunCapHook(DBG_Hooks):
         else:
             # type must be call
             ret_addr = self.return_address()
+            
             if hasattr(self, 'current_caller') and self.current_caller and ret_addr == self.next_ins(self.current_caller['addr']):
                 self.handle_after_call(ret_addr, self.stub_name)
                 self.stub_name = None    
@@ -1142,7 +1141,8 @@ class FunCapHook(DBG_Hooks):
                 self.delayed_caller = None
                 if self.resume: "FunCap: unexpected single step" # happens sometimes - due to a BUG in IDA. Hope one day it will be corrected
         if self.resume: 
-            continue_process()
+            request_continue_process()
+            run_requests()
         return 0
  
 # architecture-dependent classes that inherit from funcap core class
@@ -1475,7 +1475,8 @@ class ARMCapHook(FunCapHook):
         Get the return address stored on the stack or register
         '''
         
-        return GetRegValue('LR') - 1
+        # clearing the low bit (denotes ARM or Thumb mode)    
+        return GetRegValue('LR') & 0xFFFFFFFE
    
     def calc_ret_shift(self, ea):
         return 0 # no ret_shift here
