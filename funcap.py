@@ -426,18 +426,58 @@ class FunCapHook(DBG_Hooks):
 
         full_ctx = []
         cmt_ctx = []
+        maxdepth = 6
 
         if self.bits == 32:
-            format_string_full = "%3s: 0x%08x --> %s"
-            format_string_cmt = "   %3s: 0x%08x --> %s"
+            format_string_full = "%3s: 0x%08x"
+            format_string_cmt = "   %3s: 0x%08x"
+            format_string_append =  " --> 0x%08x "
+            getword = DbgDword
         else:
-            format_string_full = "%3s: 0x%016x --> %s"
-            format_string_cmt = "   %3s: 0x%016x --> %s"
+            format_string_full = "%3s: 0x%016x"
+            format_string_cmt = "   %3s: 0x%016x"
+            format_string_append =  " --> 0x%16x "
+            getword = DbgQword
+
+        memval = None
+        next_memval = None
+        prev_memval = None
+        valchain_full = ""
+        valchain_cmd = ""
 
         for reg in regs:
-            full_ctx.append(format_string_full % (reg['name'], reg['value'], self.smart_format(reg['deref'])))
+            valchain_full = format_string_full % (reg['name'], reg['value'])
+            valchain_cmt = format_string_cmt % (reg['name'], reg['value'])
+            prev_memval = reg['value']
+            memval=getword(reg['value'])
+            next_memval = getword(memval)
+            
+            while (next_memval): #memval is a proper pointer
+                  
+                  valchain_full += format_string_append % memval
+                  valchain_cmt += format_string_append % memval
+                 
+                  if (prev_memval == memval):#points at itself
+                                 break
+                  if (maxdepth == 0):
+                                 break
+                  maxdepth-=1
+
+                  prev_memval = memval
+                  memval = next_memval
+                  next_memval = getword(memval)
+
+            function_name=GetFunctionName(prev_memval)#no more dereferencing. is this a function ?
+            if (function_name):
+                  valchain_full += " (%s)" % function_name
+                  valchain_cmt += " (%s)" %  function_name
+            else: #no, dump binary data 
+                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
+                  valchain_cmt += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+
+	    full_ctx.append(valchain_full)
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
-                cmt_ctx.append(format_string_cmt % (reg['name'], reg['value'], self.smart_format_cmt(reg['deref'])))
+                cmt_ctx.append(valchain_cmt)
                                         
         return (full_ctx, cmt_ctx)
 
