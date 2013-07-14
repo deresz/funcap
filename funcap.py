@@ -408,11 +408,11 @@ class FunCapHook(DBG_Hooks):
 
         if self.bits == 32:
             format_string = "%3s: 0x%08x"
-            format_string_append =  " --> 0x%08x "
+            format_string_append =  " --> 0x%08x"
             getword = DbgDword
         else:
             format_string = "%3s: 0x%016x"
-            format_string_append =  " --> 0x%16x "
+            format_string_append =  " --> 0x%016x"
             getword = DbgQword
 
         memval = None
@@ -440,7 +440,7 @@ class FunCapHook(DBG_Hooks):
                   memval = next_memval
                   next_memval = getword(memval)
 
-            function_name=GetFunctionName(prev_memval)#no more dereferencing. is this a function ?
+            function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
             if (function_name):
                   valchain += " (%s)" % function_name
             else: #no, dump binary data 
@@ -466,19 +466,19 @@ class FunCapHook(DBG_Hooks):
         if self.bits == 32:
             format_string_full = "%3s: 0x%08x"
             format_string_cmt = "   %3s: 0x%08x"
-            format_string_append =  " --> 0x%08x "
+            format_string_append =  " --> 0x%08x"
             getword = DbgDword
         else:
             format_string_full = "%3s: 0x%016x"
             format_string_cmt = "   %3s: 0x%016x"
-            format_string_append =  " --> 0x%16x "
+            format_string_append =  " --> 0x%016x"
             getword = DbgQword
 
         memval = None
         next_memval = None
         prev_memval = None
         valchain_full = ""
-        valchain_cmd = ""
+        valchain_cmt = ""
 
         for reg in regs:
             valchain_full = format_string_full % (reg['name'], reg['value'])
@@ -502,7 +502,7 @@ class FunCapHook(DBG_Hooks):
                   memval = next_memval
                   next_memval = getword(memval)
 
-            function_name=GetFunctionName(prev_memval)#no more dereferencing. is this a function ?
+            function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
             if (function_name):
                   valchain_full += " (%s)" % function_name
                   valchain_cmt += " (%s)" %  function_name
@@ -530,25 +530,21 @@ class FunCapHook(DBG_Hooks):
         maxdepth = 6
 
         if self.bits == 32:
-            format_string_full = "%3s: 0x%08x"
-            format_string_cmt = "   %3s: 0x%08x"
-            format_string_append =  " --> 0x%08x "
+            format_string_append =  " --> 0x%08x"
             getword = DbgDword
         else:
-            format_string_full = "%3s: 0x%016x"
-            format_string_cmt = "   %3s: 0x%016x"
-            format_string_append =  " --> 0x%16x "
+            format_string_append =  " --> 0x%016x"
             getword = DbgQword
 
         memval = None
         next_memval = None
         prev_memval = None
         valchain_full = ""
-        valchain_cmd = ""
+        valchain_cmt = ""
 
         for reg in regs:
-            valchain_full = format_string_full % (reg['name'], reg['value'])
-            valchain_cmt = format_string_cmt % (reg['name'], reg['value'])
+            valchain_full = "%3s: 0x%016x" % (reg['name'], reg['value'])
+            valchain_cmt = "   %3s: 0x%016x" % (reg['name'], reg['value'])
             prev_memval = reg['value']
             memval=getword(reg['value'])
             next_memval = getword(memval)
@@ -568,7 +564,7 @@ class FunCapHook(DBG_Hooks):
                   memval = next_memval
                   next_memval = getword(memval)
 
-            function_name=GetFunctionName(prev_memval)#no more dereferencing. is this a function ?
+            function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
             if (function_name):
                   valchain_full += " (%s)" % function_name
                   valchain_cmt += " (%s)" %  function_name
@@ -583,8 +579,8 @@ class FunCapHook(DBG_Hooks):
         if saved_regs:
            for reg in saved_regs:
                if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
-		    valchain_full = format_string_full % (reg['name'], reg['value'])
-		    valchain_cmt = format_string_cmt % (reg['name'], reg['value'])
+		    valchain_full =  "s_%s: 0x%016x" % (reg['name'], reg['value'])
+		    valchain_cmt = "   s_%s: 0x%016x" % (reg['name'], reg['value'])
 		    prev_memval = reg['value']
 		    memval=getword(reg['value'])
 		    next_memval = getword(memval)
@@ -604,7 +600,7 @@ class FunCapHook(DBG_Hooks):
 			  memval = next_memval
 			  next_memval = getword(memval)
 
-		    function_name=GetFunctionName(prev_memval)#no more dereferencing. is this a function ?
+		    function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
 		    if (function_name):
 			  valchain_full += " (%s)" % function_name
 			  valchain_cmt += " (%s)" %  function_name
@@ -613,8 +609,7 @@ class FunCapHook(DBG_Hooks):
 			  valchain_cmt += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
 
 		    full_ctx.append(valchain_full)
-		    if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-			cmt_ctx.append(valchain_cmt)
+	     	    cmt_ctx.append(valchain_cmt)
 
                                         
         return (full_ctx, cmt_ctx)
