@@ -127,6 +127,7 @@ class FunCapHook(DBG_Hooks):
         @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff like that (default: no)
         @param no_dll: disable API calls capturing (default: no)
         @param strings_file: file containing strings dump on captured function arguments (default: %USERPROFILE%\funcap_strings.txt)
+        @param multiple_dereferences: dereference each pointer resursively ? (default: yes)
         
         '''
         self.outfile = kwargs.get('outfile', os.path.expanduser('~') + "/funcap.txt")
@@ -142,6 +143,7 @@ class FunCapHook(DBG_Hooks):
         self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
         self.no_dll = kwargs.get('no_dll', False)
         self.strings_file = kwargs.get('strings', os.path.expanduser('~') + "/funcap_strings.txt")
+        self.multiple_dereferences = kwargs.get('multiple_dereferences', True)
         
         self.visited = [] # functions visited already
         self.saved_contexts = {} # saved stack contexts - to re-dereference arguments when the function exits
@@ -418,36 +420,42 @@ class FunCapHook(DBG_Hooks):
         memval = None
         next_memval = None
         prev_memval = None
-        valchain = ""
+        valchain_full = ""
+        valchain_cmt = ""
 
         for reg in regs:
-            valchain = format_string % (reg['name'], reg['value'])
+            valchain_full = format_string % (reg['name'], reg['value'])
+            valchain_cmt = format_string % (reg['name'], reg['value'])
             prev_memval = reg['value']
             memval=getword(reg['value'])
             next_memval = getword(memval)
-            
-            while (next_memval): #memval is a proper pointer
-                  
-                  valchain += format_string_append % memval
-                 
-                  if (prev_memval == memval):#points at itself
-                                 break
-                  if (maxdepth == 0):
-                                 break
-                  maxdepth-=1
 
-                  prev_memval = memval
-                  memval = next_memval
-                  next_memval = getword(memval)
+            if (self.multiple_dereferences):
+		    while (next_memval): #memval is a proper pointer
+			  
+			  valchain_full += format_string_append % memval
+			  valchain_cmt += format_string_append % memval
+			 
+			  if (prev_memval == memval):#points at itself
+					 break
+			  if (maxdepth == 0):
+					 break
+			  maxdepth-=1
+
+			  prev_memval = memval
+			  memval = next_memval
+			  next_memval = getword(memval)
 
             function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
             if (function_name):
-                  valchain += " (%s)" % function_name
+                  valchain_full += " (%s)" % function_name
+                  valchain_cmt += " (%s)" % function_name
             else: #no, dump binary data 
-                  valchain += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
+                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
+                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
 
-	    full_ctx.append(valchain)
-            cmt_ctx.append(valchain)
+	    full_ctx.append(valchain_full)
+            cmt_ctx.append(valchain_cmt)
                                         
         return (full_ctx, cmt_ctx)
     
@@ -487,20 +495,21 @@ class FunCapHook(DBG_Hooks):
             memval=getword(reg['value'])
             next_memval = getword(memval)
             
-            while (next_memval): #memval is a proper pointer
-                  
-                  valchain_full += format_string_append % memval
-                  valchain_cmt += format_string_append % memval
-                 
-                  if (prev_memval == memval):#points at itself
-                                 break
-                  if (maxdepth == 0):
-                                 break
-                  maxdepth-=1
+            if (self.multiple_dereferences): 
+		    while (next_memval): #memval is a proper pointer
+			  
+			  valchain_full += format_string_append % memval
+			  valchain_cmt += format_string_append % memval
+			 
+			  if (prev_memval == memval):#points at itself
+					 break
+			  if (maxdepth == 0):
+					 break
+			  maxdepth-=1
 
-                  prev_memval = memval
-                  memval = next_memval
-                  next_memval = getword(memval)
+			  prev_memval = memval
+			  memval = next_memval
+			  next_memval = getword(memval)
 
             function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
             if (function_name):
@@ -508,7 +517,7 @@ class FunCapHook(DBG_Hooks):
                   valchain_cmt += " (%s)" %  function_name
             else: #no, dump binary data 
                   valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-                  valchain_cmt += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
 
 	    full_ctx.append(valchain_full)
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
@@ -549,42 +558,7 @@ class FunCapHook(DBG_Hooks):
             memval=getword(reg['value'])
             next_memval = getword(memval)
             
-            while (next_memval): #memval is a proper pointer
-                  
-                  valchain_full += format_string_append % memval
-                  valchain_cmt += format_string_append % memval
-                 
-                  if (prev_memval == memval):#points at itself
-                                 break
-                  if (maxdepth == 0):
-                                 break
-                  maxdepth-=1
-
-                  prev_memval = memval
-                  memval = next_memval
-                  next_memval = getword(memval)
-
-            function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
-            if (function_name):
-                  valchain_full += " (%s)" % function_name
-                  valchain_cmt += " (%s)" %  function_name
-            else: #no, dump binary data 
-                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-                  valchain_cmt += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
-
-	    full_ctx.append(valchain_full)
-            if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
-                cmt_ctx.append(valchain_cmt)
-            
-        if saved_regs:
-           for reg in saved_regs:
-               if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
-		    valchain_full =  "s_%s: 0x%016x" % (reg['name'], reg['value'])
-		    valchain_cmt = "   s_%s: 0x%016x" % (reg['name'], reg['value'])
-		    prev_memval = reg['value']
-		    memval=getword(reg['value'])
-		    next_memval = getword(memval)
-		    
+            if (self.multiple_dereferences):
 		    while (next_memval): #memval is a proper pointer
 			  
 			  valchain_full += format_string_append % memval
@@ -600,17 +574,52 @@ class FunCapHook(DBG_Hooks):
 			  memval = next_memval
 			  next_memval = getword(memval)
 
+            function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
+            if (function_name):
+                  valchain_full += " (%s)" % function_name
+                  valchain_cmt += " (%s)" %  function_name
+            else: #no, dump binary data 
+                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
+                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+
+	    full_ctx.append(valchain_full)
+            if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
+                cmt_ctx.append(valchain_cmt)
+            
+        if saved_regs:
+           for reg in saved_regs:
+               if any(regex.match(reg['name']) for regex in self.CMT_RET_SAVED_CTX):
+		    valchain_full =  "s_%s: 0x%016x" % (reg['name'], reg['value'])
+		    valchain_cmt = "   s_%s: 0x%016x" % (reg['name'], reg['value'])
+		    prev_memval = reg['value']
+		    memval=getword(reg['value'])
+		    next_memval = getword(memval)
+		    
+                    if (self.multiple_dereferences):
+		        while (next_memval): #memval is a proper pointer
+			  valchain_full += format_string_append % memval
+			  valchain_cmt += format_string_append % memval
+			 
+			  if (prev_memval == memval):#points at itself
+					 break
+			  if (maxdepth == 0):
+					 break
+			  maxdepth-=1
+
+			  prev_memval = memval
+			  memval = next_memval
+			  next_memval = getword(memval)
+
 		    function_name=GetFuncOffset(prev_memval)#no more dereferencing. is this a function ?
 		    if (function_name):
-			  valchain_full += " (%s)" % function_name
-			  valchain_cmt += " (%s)" %  function_name
+		          valchain_full += " (%s)" % function_name
+		          valchain_cmt += " (%s)" %  function_name
 		    else: #no, dump binary data 
 			  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-			  valchain_cmt += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+			  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
 
 		    full_ctx.append(valchain_full)
-	     	    cmt_ctx.append(valchain_cmt)
-
+		    cmt_ctx.append(valchain_cmt)
                                         
         return (full_ctx, cmt_ctx)
     
