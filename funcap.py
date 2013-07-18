@@ -410,11 +410,11 @@ class FunCapHook(DBG_Hooks):
 
         if self.bits == 32:
             format_string = "%3s: 0x%08x"
-            format_string_append =  " --> 0x%08x"
+            format_string_append =  " -> 0x%08x"
             getword = DbgDword
         else:
             format_string = "%3s: 0x%016x"
-            format_string_append =  " --> 0x%016x"
+            format_string_append =  " -> 0x%016x"
             getword = DbgQword
 
         memval = None
@@ -450,9 +450,21 @@ class FunCapHook(DBG_Hooks):
             if (function_name):
                   valchain_full += " (%s)" % function_name
                   valchain_cmt += " (%s)" % function_name
-            else: #no, dump binary data 
-                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
+            else: #no, dump data  
+                  if (self.hexdump): 
+			valchain_full_left = self.HEXMODE_DEREF_SIZE - len(valchain_full)
+                  	valchain_cmt_left = self.HEXMODE_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                        format_string_dump = " (%s)"
+                  else:
+			 valchain_full_left = self.STRING_DEREF_SIZE - len(valchain_full)
+                  	 valchain_cmt_left = self.STRING_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                         format_string_dump = " (\"%s\")"
+
+                  if (valchain_full_left <4): valchain_full_left = 4 #allways dump at least 4 bytes
+                  if (valchain_cmt_left <4): valchain_cmt_left = 4 #allways dump at least 4 bytes
+
+                  valchain_full += format_string_dump % self.smart_format(self.dereference(prev_memval,2 * valchain_full_left), valchain_full_left)
+                  valchain_cmt += format_string_dump % self.smart_format_cmt(self.dereference(prev_memval,2 * valchain_cmt_left),valchain_cmt_left)
 
 	    full_ctx.append(valchain_full)
             cmt_ctx.append(valchain_cmt)
@@ -474,12 +486,12 @@ class FunCapHook(DBG_Hooks):
         if self.bits == 32:
             format_string_full = "%3s: 0x%08x"
             format_string_cmt = "   %3s: 0x%08x"
-            format_string_append =  " --> 0x%08x"
+            format_string_append =  " -> 0x%08x"
             getword = DbgDword
         else:
             format_string_full = "%3s: 0x%016x"
             format_string_cmt = "   %3s: 0x%016x"
-            format_string_append =  " --> 0x%016x"
+            format_string_append =  " -> 0x%016x"
             getword = DbgQword
 
         memval = None
@@ -515,9 +527,21 @@ class FunCapHook(DBG_Hooks):
             if (function_name):
                   valchain_full += " (%s)" % function_name
                   valchain_cmt += " (%s)" %  function_name
-            else: #no, dump binary data 
-                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+            else: #no, dump data
+                  if (self.hexdump): 
+			valchain_full_left = self.HEXMODE_DEREF_SIZE - len(valchain_full)
+                  	valchain_cmt_left = self.HEXMODE_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                        format_string_dump = " (%s)"
+                  else:
+			 valchain_full_left = self.STRING_DEREF_SIZE - len(valchain_full)
+                  	 valchain_cmt_left = self.STRING_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                         format_string_dump = " (\"%s\")"
+
+                  if (valchain_full_left <4): valchain_full_left = 4 #allways dump at least 4 bytes
+                  if (valchain_cmt_left <4): valchain_cmt_left = 4 #allways dump at least 4 bytes
+
+                  valchain_full += format_string_dump % self.smart_format(self.dereference(prev_memval,2 * valchain_full_left), valchain_full_left)
+                  valchain_cmt += format_string_dump % self.smart_format_cmt(self.dereference(prev_memval,2 * valchain_cmt_left),valchain_cmt_left)
 
 	    full_ctx.append(valchain_full)
             if any(regex.match(reg['name']) for regex in self.CMT_CALL_CTX):
@@ -539,10 +563,10 @@ class FunCapHook(DBG_Hooks):
         maxdepth = 6
 
         if self.bits == 32:
-            format_string_append =  " --> 0x%08x"
+            format_string_append =  " -> 0x%08x"
             getword = DbgDword
         else:
-            format_string_append =  " --> 0x%016x"
+            format_string_append =  " -> 0x%016x"
             getword = DbgQword
 
         memval = None
@@ -578,9 +602,21 @@ class FunCapHook(DBG_Hooks):
             if (function_name):
                   valchain_full += " (%s)" % function_name
                   valchain_cmt += " (%s)" %  function_name
-            else: #no, dump binary data 
-                  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-                  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+            else: #no, dump data 
+                  if (self.hexdump): 
+			valchain_full_left = self.HEXMODE_DEREF_SIZE - len(valchain_full)
+                  	valchain_cmt_left = self.HEXMODE_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                        format_string_dump = " (%s)"
+                  else:
+			 valchain_full_left = self.STRING_DEREF_SIZE - len(valchain_full)
+                  	 valchain_cmt_left = self.STRING_LENGTH_IN_COMMENTS - len(valchain_cmt)
+                         format_string_dump = " (\"%s\")"
+
+                  if (valchain_full_left <4): valchain_full_left = 4 #allways dump at least 4 bytes
+                  if (valchain_cmt_left <4): valchain_cmt_left = 4 #allways dump at least 4 bytes
+
+                  valchain_full += format_string_dump % self.smart_format(self.dereference(prev_memval,2 * valchain_full_left), valchain_full_left)
+                  valchain_cmt += format_string_dump % self.smart_format_cmt(self.dereference(prev_memval,2 * valchain_cmt_left),valchain_cmt_left)
 
 	    full_ctx.append(valchain_full)
             if any(regex.match(reg['name']) for regex in self.CMT_RET_CTX):
@@ -614,9 +650,21 @@ class FunCapHook(DBG_Hooks):
 		    if (function_name):
 		          valchain_full += " (%s)" % function_name
 		          valchain_cmt += " (%s)" %  function_name
-		    else: #no, dump binary data 
-			  valchain_full += " (\"%s\")" % self.smart_format(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE))
-			  valchain_cmt += " (\"%s\")" % self.smart_format_cmt(self.dereference(prev_memval,2 * self.STRING_DEREF_SIZE)) 
+		    else: #no, dump data 
+	                  if (self.hexdump): 
+				valchain_full_left = self.HEXMODE_DEREF_SIZE - len(valchain_full)
+	                  	valchain_cmt_left = self.HEXMODE_LENGTH_IN_COMMENTS - len(valchain_cmt)
+	                        format_string_dump = " (%s)"
+	                  else:
+				 valchain_full_left = self.STRING_DEREF_SIZE - len(valchain_full)
+	                  	 valchain_cmt_left = self.STRING_LENGTH_IN_COMMENTS - len(valchain_cmt)
+	                         format_string_dump = " (\"%s\")"
+
+	                  if (valchain_full_left <4): valchain_full_left = 4 #allways dump at least 4 bytes
+	                  if (valchain_cmt_left <4): valchain_cmt_left = 4 #allways dump at least 4 bytes
+
+	                  valchain_full += format_string_dump % self.smart_format(self.dereference(prev_memval,2 * valchain_full_left), valchain_full_left)
+	                  valchain_cmt += format_string_dump % self.smart_format_cmt(self.dereference(prev_memval,2 * valchain_cmt_left),valchain_cmt_left)
 
 		    full_ctx.append(valchain_full)
 		    cmt_ctx.append(valchain_cmt)
@@ -761,7 +809,7 @@ class FunCapHook(DBG_Hooks):
     def dereference(self, address, size):
         return GetManyBytes(address, size, use_dbg=True)
  
-    def smart_format(self, raw_data, print_dots=True):    
+    def smart_format(self, raw_data, maxlen, print_dots=True):    
         '''
         "Intelligently" discover data behind an address. The address is dereferenced and explored in search of an ASCII
         or Unicode string. In the absense of a string the printable characters are returned with non-printables
@@ -779,12 +827,10 @@ class FunCapHook(DBG_Hooks):
         if not raw_data:
             return 'N/A'
         
-        try_unicode = raw_data[:self.STRING_DEREF_SIZE * 2]
-        try_ascii = raw_data[:self.STRING_DEREF_SIZE]
-        if self.hexdump:
-            data = raw_data[:self.HEXMODE_DEREF_SIZE]
-        else:
-            data = raw_data[:self.STRING_DEREF_SIZE]
+        try_unicode = raw_data[:maxlen * 2]
+        try_ascii = raw_data[:maxlen]
+
+        data = raw_data[:maxlen]
         
         data_string = self.get_ascii_string(try_ascii)
 
@@ -805,7 +851,7 @@ class FunCapHook(DBG_Hooks):
 
         return data_string 
 
-    def smart_format_cmt(self, raw_data, print_dots=True):    
+    def smart_format_cmt(self, raw_data, maxlen,  print_dots=True):    
         '''
         Same as smart_format() but for IDA comments
         '''
@@ -813,12 +859,12 @@ class FunCapHook(DBG_Hooks):
         if not raw_data:
             return 'N/A'
         
-        try_unicode = raw_data[:self.STRING_LENGTH_IN_COMMENTS * 2]
-        try_ascii = raw_data[:self.STRING_LENGTH_IN_COMMENTS]
+        try_unicode = raw_data[:maxlen * 2]
+        try_ascii = raw_data[:maxlen]
         if self.hexdump:
-            data = raw_data[:self.HEXMODE_LENGTH_IN_COMMENTS]
+            data = raw_data[:maxlen]
         else:
-            data = raw_data[:self.STRING_LENGTH_IN_COMMENTS]
+            data = raw_data[:maxlen]
                 
         data_string = self.get_ascii_string(try_ascii)
 
