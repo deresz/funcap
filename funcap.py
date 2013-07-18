@@ -861,10 +861,8 @@ class FunCapHook(DBG_Hooks):
         
         try_unicode = raw_data[:maxlen * 2]
         try_ascii = raw_data[:maxlen]
-        if self.hexdump:
-            data = raw_data[:maxlen]
-        else:
-            data = raw_data[:maxlen]
+        
+        data = raw_data[:maxlen]
                 
         data_string = self.get_ascii_string(try_ascii)
 
