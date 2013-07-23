@@ -152,6 +152,12 @@ If you happen to use funcap with WinDbg (I am using it to debug Windows kernel m
 
 _NOTE:_ when debugging executables linked with glibc, for example Linux ELF binaries, set the environment variable LD_BIND_NOW=1 in order for linker to do all the PLT fixups at program load, otherwise the first call to a given API will not be properly captured as funcap is unable to step into the lazy binding routines.  
 
-_Known limitations_
+_Known limitations and bugs_
 - "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls, if not it lasts very long
 - on ARM - there is no stack-based arguments capture - IDA does not seem to give needed info regarding the stack frame. 4 register based args are captured, though, which makes it for most of the functions
+
+_Update_:
+
+Thanks to [Bartol0](https://github.com/Bartol0) we now have multiple_dereferences option that will follow captured memory pointer multiple times trying to discover what it might point to, similar to [PEDA](http://ropshell.com/peda). Example:
+
+![multi_deref](img/multi_deref.png)
