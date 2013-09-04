@@ -1053,6 +1053,14 @@ class FunCapHook(DBG_Hooks):
         '''
 
         name = GetFunctionName(ea)
+        symbol_name = Name(ea)
+        
+        if symbol_name and name and symbol_name != name and not re.match("loc_", symbol_name):
+            self.output("WARNING: IDA has probably wrongly analyzed the following function: %s and " \
+                        "it is overlapping with another symbol: %s. Funcap will undefine it. " % (name, symbol_name))
+            DelFunction(LocByName(name))
+            name = None
+        
         if name: return name
 
         need_hooking = False
@@ -1069,6 +1077,8 @@ class FunCapHook(DBG_Hooks):
             if MakeCode(ea):
                 # fine, we try again
                 r = MakeFunction(ea)
+                if not r:
+                    self.output("WARNING: unable to create function at 0x%x" % ea)
             else:
                 # undefining also helps. Last try (thx IgorS)
                 ins = DecodeInstruction(ea)
@@ -1080,6 +1090,8 @@ class FunCapHook(DBG_Hooks):
                         r = MakeFunction(ea)
                         refresh_debugger_memory()
                         r = MakeFunction(ea)
+                        if not r:
+                            self.output("WARNING: unable to create function at 0x%x" % ea)
 
         if need_hooking:
             start_ea = SegStart(ea)
@@ -1131,8 +1143,8 @@ class FunCapHook(DBG_Hooks):
             if (self.recursive or self.code_discovery) and not self.is_system_lib(seg_name) and name not in self.hooked:
                 self.hookFunc(func = name)
         else:
-            name = "0x%x" % ea
-            self.output("WARNING: cannot create function at %s" % name)
+            name = Name(ea) # maybe there is a symbol (happens sometimes when the IDA analysis goes wrong)
+            if not name: name = "0x%x" % ea
             # this probably is not a real function then - handle it in a generic way
             self.output("Call to unknown function: 0x%x to %s" % (caller_ea,name))
             self.handle_generic(ea)
