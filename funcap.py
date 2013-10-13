@@ -1697,13 +1697,17 @@ class CallGraph(GraphViewer):
         self.calls = calls
         self.nodes = {}
         self.exact_offsets = exact_offsets
-
+        
+    # warning: this won't work after code relocation !
     def OnRefresh(self):
         self.Clear()
         node_callers = {}
         for hit, call in self.calls.items():
             #current_call = self.calls[hit]
             name = call['name']
+            current_name = GetFunctionName(hit) # check if the user has changed the name of a function
+            if current_name:
+                name = current_name
             #name = current_call['name']
             #print "adding primary node %x" % hit
             if not node_callers.has_key(hit):
@@ -1714,14 +1718,12 @@ class CallGraph(GraphViewer):
                     caller_name = caller['offset']
                     graph_caller = caller['ea']
                 else:
-                    caller_name = caller['name']
-                    #caller_name = caller['name']
-                    if not caller_name:
-                        caller_name = "0x%x" % caller['ea']
+                    graph_caller = GetFunctionAttr(caller['ea'], FUNCATTR_START)
+                    if graph_caller == 0xffffffff: # no symbol exist
                         graph_caller = caller['ea']
+                        caller_name = caller['name'] 
                     else:
-                        graph_caller = LocByName(caller_name)
-                        #print "graph_caller: %x" % graph_caller
+                        caller_name = GetFunctionName(graph_caller)
                 if not node_callers.has_key(graph_caller):
                     #print "adding node %x" % caller
                     self.nodes[graph_caller] = self.AddNode((graph_caller, caller_name))
