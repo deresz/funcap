@@ -40,6 +40,7 @@ So we got one fat script file atm.
 # IDA imports
 
 import sys
+import pickle
 from idaapi import *
 from idautils import *
 from idc import *
@@ -99,10 +100,12 @@ class FunCapHook(DBG_Hooks):
     HEXMODE_LENGTH_IN_COMMENTS = 82
     # visited functions will be tagged as follows
     FUNC_COLOR = 0xF7CBEA
+    #FUNC_COLOR = 0xF7A0A0
     # visited items (except call instructions) will be tagged as follows
     ITEM_COLOR = 0x70E01B
     # calls will be tagged as follows
     CALL_COLOR = 0x99CCCC
+    #CALL_COLOR = 0xB1A0F7
     # maximum comment lines inserted after/before call instructions
     CMT_MAX = 5
 
@@ -120,6 +123,8 @@ class FunCapHook(DBG_Hooks):
         @param overwrite_existing: overwrite existing capture comment in IDA when the same function is called ? (default: no)
         @param recursive: when breaking on a call - are we recursively hooking all call instructions in the new function ? (default: no)
         @param code_discovery: enable discovery of a dynamically created code - for obfuscators and stuff like that (default: no)
+        @param code_discovery_nojmp: don't hook jumps in code_discovery mode (default: no)
+        @param code_discovery_stop: stop if new code section is discovered (default: no)
         @param no_dll: disable API calls capturing (default: no)
         @param strings_file: file containing strings dump on captured function arguments (default: %USERPROFILE%\funcap_strings.txt)
         @param multiple_dereferences: dereference each pointer resursively ? (default: 3 levels, 0 - off)
@@ -136,6 +141,8 @@ class FunCapHook(DBG_Hooks):
         self.overwrite_existing = kwargs.get('overwrite_existing', False)
         self.recursive = kwargs.get('recursive', False)
         self.code_discovery = kwargs.get('code_discovery', False) # for obfuscators
+        self.code_discovery_nojmp = kwargs.get('code_discovery_nojmp', False)
+        self.code_discovery_stop = kwargs.get('code_discovery_stop', False)
         self.no_dll = kwargs.get('no_dll', False)
         self.strings_file = kwargs.get('strings', os.path.expanduser('~') + "/funcap_strings.txt")
         self.multiple_dereferences = kwargs.get('multiple_dereferences', 3)
@@ -291,6 +298,12 @@ class FunCapHook(DBG_Hooks):
         '''
 
         CallGraph("FunCap: function calls", self.calls_graph, exact_offsets).Show()
+
+    def saveGraph(self, path = os.path.expanduser('~') + "/funcap.graph"):
+        pickle.dump(d.calls_graph, open(path, "w"))
+
+    def loadGraph(self, path = os.path.expanduser('~') + "/funcap.graph"):
+        d.calls_graph = pickle.load(open(path, "r"))
 
     def addStop(self, ea):
         '''
@@ -1054,13 +1067,13 @@ class FunCapHook(DBG_Hooks):
 
         name = GetFunctionName(ea)
         symbol_name = Name(ea)
-        
+
         if symbol_name and name and symbol_name != name and not re.match("loc_", symbol_name):
             self.output("WARNING: IDA has probably wrongly analyzed the following function: %s and " \
                         "it is overlapping with another symbol: %s. Funcap will undefine it. " % (name, symbol_name))
             DelFunction(LocByName(name))
             name = None
-        
+
         if name: return name
 
         need_hooking = False
@@ -1097,8 +1110,14 @@ class FunCapHook(DBG_Hooks):
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
             refresh_debugger_memory()
+            self.output("0x%x: new code section detected: [0x%x, 0x%x]" % ea, start_ea, end_ea)
             AnalyzeArea(start_ea, end_ea)
-            self.add_call_and_jump_bp(start_ea, end_ea)
+            if self.code_discovery_stop:
+                self.resume = False
+            if self.code_discovery_nojmp:
+                self.add_call_bp(start_ea, end_ea)
+            else:
+                self.add_call_and_jump_bp(start_ea, end_ea)
 
         if r:
             name = GetFunctionName(ea)
@@ -1697,7 +1716,7 @@ class CallGraph(GraphViewer):
         self.calls = calls
         self.nodes = {}
         self.exact_offsets = exact_offsets
-        
+
     # warning: this won't work after code relocation !
     def OnRefresh(self):
         self.Clear()
@@ -1721,7 +1740,7 @@ class CallGraph(GraphViewer):
                     graph_caller = GetFunctionAttr(caller['ea'], FUNCATTR_START)
                     if graph_caller == 0xffffffff: # no symbol exist
                         graph_caller = caller['ea']
-                        caller_name = caller['name'] 
+                        caller_name = caller['name']
                     else:
                         caller_name = GetFunctionName(graph_caller)
                 if not node_callers.has_key(graph_caller):

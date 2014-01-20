@@ -18,7 +18,7 @@ In the above example funcap has analyzed the called function using IDA automatic
 Yet another example from Taidoor - a simple decoding function that will decode the name of the process to which the code will be injected. Note that the pointer to the decrypted string is being returned via EAX in this case. This example is quite usefull as Taidoor encryps body of some functions using RC4 so it further complicates and slows down static analysis:
 
 ![taidoor_svchost](img/taidoor_svchost.png)
-  
+
 funcap will also capture library calls if told so (does it by default). A library function will also be analysed on the fly to determine its number of arguments. Take a look at this example:
 
 ![move_file](img/move_file.png)
@@ -52,8 +52,8 @@ Last but not least, funcap can draw a graph of function calls. The graph is simi
 
 ![graph](img/graph.png)
 
-funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than 'strings'command run on a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured. 
-    
+funcap also takes a dump of all string arguments to a file (by defualt %USERPROFILE%\funcap_strings.txt). This is more/less equivalent to performing a 'strings' command on function arguments which can also be quite handy. This is slightly more effective than 'strings'command run on a dump of process memory because even strings that are decrypted and then re-encrypted after use (and I have seen this already), will be captured.
+
 _How to use_
 
 The usage is very easy. At any moment in time, either before a debugging session or in the middle of it when things get interesting, you can run the script and it will be automatically enabled. All the commands are operated from the Python console via the object 'd'. To turn the script off and on:
@@ -73,12 +73,12 @@ To facilitate adding breakpoints, you can use this helper function:
 It will place breakpoints on all the call instructions in the current segment. If you use the seg='segment_name' it will do the same for a specified segment. If you want to add breakpoints on call instruction in the currently displayed function use this:
 
     Python>d.hookFunc()
-    hooking function: WinMain() 
+    hooking function: WinMain()
 
 You can also do the same for a particular function using func='function_name' parameter, like this:
 
     Python>d.hookFunc(func="myfunc")
-    hooking function: myfunc() 
+    hooking function: myfunc()
 
 If you want that all the called function be dynamically hooked as well, type 'd.recursive = True'. There are many other options available (such as d.hexdump, d.code_discovery etc.) that are described in pydocs and comments in the script body. If you prefer to hook instructions at function start/end instead of call instructions and have more info from registers in IDA listings but only first spotted call for a particular function captured, use d.addCallee().
 
@@ -86,31 +86,38 @@ To draw a graph type:
 
     Python>d.graph()
 
-Unfortunately graph is not saved in the IDB file. To save the graph you can use the 'pickle' module like this:
+Unfortunately graph is not saved in the IDB file. To save the graph you can type:
 
-    Python>import pickle
-    Python>pickle.dump(d.calls_graph, open("my_sample.graph", "w"))
+    Python>d.saveGraph()
 
-To load a graph after loading your IDB file type:
+The graph file will be saved %USERPROFILE%\funcap.graph. You can also specify a path:
 
-    Python>d.calls_graph = pickle.load(open("my_sample.graph", "r"))
+	Python>d.saveGraph("path")
+
+To load a graph after loading your IDB file later on type:
+
+    Python>d.loadGraph()
+
+Or if you want to load it from the path other than %USERPROFILE%\funcap.graph type:
+
+	Python>d.loadGraph("path")
 
 There is more methods to interface with the "public interface" of object d, of which the most useful are:
-  
+
     delAll(self):
         Delete all breakpoints
 
     addStop(self, ea):
         Add a stop point - the script will pause the process when this is reached
-        
+
         @param ea: address of the new stop point to add
 
     addCJ(self, func = ""):
         Hook noth call and jump instructions
-        
-        @param func: name of the function to hook     
-        
-The below is a list of parameters that can be changed from the console after loading the script or during the class instantiantion: 
+
+        @param func: name of the function to hook
+
+The below is a list of parameters that can be changed from the console after loading the script or during the class instantiantion:
 
     @param outfile: log file where the output dump will be written (default: %USERPROFILE%\funcap.txt)
     @param delete_breakpoints: delete a breakpoint after first pass ? (default: yes)
@@ -150,7 +157,7 @@ To look like:
 
 If you happen to use funcap with WinDbg (I am using it to debug Windows kernel mode code), use "Script command" from File menu as the console is being taken over by WINDBG prompt during the debugging session.
 
-_NOTE:_ when debugging executables linked with glibc, for example Linux ELF binaries, set the environment variable LD_BIND_NOW=1 in order for linker to do all the PLT fixups at program load, otherwise the first call to a given API will not be properly captured as funcap is unable to step into the lazy binding routines.  
+_NOTE:_ when debugging executables linked with glibc, for example Linux ELF binaries, set the environment variable LD_BIND_NOW=1 in order for linker to do all the PLT fixups at program load, otherwise the first call to a given API will not be properly captured as funcap is unable to step into the lazy binding routines.
 
 _Known limitations and bugs_
 - "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls, if not it lasts very long
