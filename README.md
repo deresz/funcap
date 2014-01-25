@@ -163,8 +163,9 @@ _Known limitations and bugs_
 - "Analyzing area" needs to be cancelled by clicking on it when analyzing some API calls, if not it lasts very long
 - on ARM - there is no stack-based arguments capture - IDA does not seem to give needed info regarding the stack frame. 4 register based args are captured, though, which makes it for most of the functions
 
-_Update_:
-
 Thanks to [Bartol0](https://github.com/Bartol0) we now have multiple_dereferences option that will follow captured memory pointer multiple times trying to discover what it might point to, similar to [PEDA](http://ropshell.com/peda). Example:
 
 ![multi_deref](img/multi_deref.png)
+
+In "utils" fodler you will find some other useful scripts:
+- fundump.py & funload.py - a pair of scripts that will dump function names from one IDB, for example your static IDB file, and then will rename the same functions (based on their signatures) in another IDB file. For example, if you are debugging a code that is moved around in memory in a non-standard way and IDA is not able to be told that it is your relocated static IDB, this is for you.
