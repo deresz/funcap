@@ -414,7 +414,6 @@ class FunCapHook(DBG_Hooks):
 
         full_ctx = []
         cmt_ctx = []
-        maxdepth = self.multiple_dereferences
 
         if self.bits == 32:
             format_string = "%3s: 0x%08x"
@@ -439,16 +438,15 @@ class FunCapHook(DBG_Hooks):
             next_memval = getword(memval)
 
             if (self.multiple_dereferences):
+                maxdepth = self.multiple_dereferences
                 while (next_memval): #memval is a proper pointer
-
-                    valchain_full += format_string_append % memval
-                    valchain_cmt += format_string_append % memval
-
-                    if (prev_memval == memval):#points at itself
-                        break
                     if (maxdepth == 0):
                         break
                     maxdepth-=1
+                    if (prev_memval == memval):#points at itself
+                        break
+                    valchain_full += format_string_append % memval
+                    valchain_cmt += format_string_append % memval
 
                     prev_memval = memval
                     memval = next_memval
@@ -489,7 +487,6 @@ class FunCapHook(DBG_Hooks):
 
         full_ctx = []
         cmt_ctx = []
-        maxdepth = self.multiple_dereferences
 
         if self.bits == 32:
             format_string_full = "%3s: 0x%08x"
@@ -516,16 +513,15 @@ class FunCapHook(DBG_Hooks):
             next_memval = getword(memval)
 
             if (self.multiple_dereferences):
+                maxdepth = self.multiple_dereferences
                 while (next_memval): #memval is a proper pointer
-
-                    valchain_full += format_string_append % memval
-                    valchain_cmt += format_string_append % memval
-
-                    if (prev_memval == memval):#points at itself
-                        break
                     if (maxdepth == 0):
                         break
                     maxdepth-=1
+                    if (prev_memval == memval):#points at itself
+                        break
+                    valchain_full += format_string_append % memval
+                    valchain_cmt += format_string_append % memval
 
                     prev_memval = memval
                     memval = next_memval
@@ -568,7 +564,6 @@ class FunCapHook(DBG_Hooks):
 
         full_ctx = []
         cmt_ctx = []
-        maxdepth = self.multiple_dereferences
 
         if self.bits == 32:
             format_string_append =  " -> 0x%08x"
@@ -595,16 +590,15 @@ class FunCapHook(DBG_Hooks):
             next_memval = getword(memval)
 
             if (self.multiple_dereferences):
+                maxdepth = self.multiple_dereferences
                 while (next_memval): #memval is a proper pointer
-
-                    valchain_full += format_string_append % memval
-                    valchain_cmt += format_string_append % memval
-
-                    if (prev_memval == memval):#points at itself
-                        break
                     if (maxdepth == 0):
                         break
                     maxdepth-=1
+                    if (prev_memval == memval):#points at itself
+                        break
+                    valchain_full += format_string_append % memval
+                    valchain_cmt += format_string_append % memval
 
                     prev_memval = memval
                     memval = next_memval
@@ -644,15 +638,15 @@ class FunCapHook(DBG_Hooks):
                     next_memval = getword(memval)
 
                     if (self.multiple_dereferences):
+                        maxdepth = self.multiple_dereferences
                         while (next_memval): #memval is a proper pointer
-                            valchain_full += format_string_append % memval
-                            valchain_cmt += format_string_append % memval
-
-                            if (prev_memval == memval):#points at itself
-                                break
                             if (maxdepth == 0):
                                 break
+                            if (prev_memval == memval):#points at itself
+                                break
                             maxdepth-=1
+                            valchain_full += format_string_append % memval
+                            valchain_cmt += format_string_append % memval
 
                             prev_memval = memval
                             memval = next_memval
