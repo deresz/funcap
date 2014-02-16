@@ -24,11 +24,12 @@ for f in list(Functions()):
         bytes_read = flen
     else:
         bytes_read = BYTES_COMPARE
-    start_bytes = GetManyBytes(function.startEA, flen)
+    start_bytes = GetManyBytes(function.startEA, bytes_read)
     m = md5.new()
     m.update("%x" % flen)
     m.update(start_bytes)
-    renamed_functions[m.digest()] = name
+    digest = m.digest()
+    renamed_functions[digest] = name
     print "Function name %s saved" % name
 
 dumpfile = os.path.expanduser('~') + "/fun.dump"
