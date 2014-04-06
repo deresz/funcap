@@ -1108,7 +1108,7 @@ class FunCapHook(DBG_Hooks):
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
             refresh_debugger_memory()
-            self.output("0x%x: new code section detected: [0x%x, 0x%x]" % ea, start_ea, end_ea)
+            self.output("0x%x: new code section detected: [0x%x, 0x%x]" % (ea, start_ea, end_ea))
             AnalyzeArea(start_ea, end_ea)
             if self.code_discovery_stop:
                 self.resume = False
