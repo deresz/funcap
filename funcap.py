@@ -1076,7 +1076,7 @@ class FunCapHook(DBG_Hooks):
 
         need_hooking = False
         seg_name = SegName(ea)
-        if self.code_discovery and not self.is_system_lib(seg_name) and not isCode(GetFlags(ea)):
+        if self.code_discovery and not self.is_system_lib(seg_name) and (not isCode(GetFlags(ea)) or not self.isCode):
             need_hooking = True
 
         refresh_debugger_memory() # need to call this here (thx IlfakG)
@@ -1214,8 +1214,8 @@ class FunCapHook(DBG_Hooks):
         self.output_lines([ header ] + context_full + [ "" ])
 
         # we prefer kernel32 than kernelbase etc. - this is to bypass stubs
-        if self.stub_name:
-            name = self.stub_name
+        #if self.stub_name:
+        #    name = self.stub_name
 
         # insert IDA's comments
         if self.comments and (self.overwrite_existing or caller_ea not in self.visited):
@@ -1337,6 +1337,7 @@ class FunCapHook(DBG_Hooks):
         # print "check_stub(): %x : %d" % (ea, self.stub_steps)
         if self.stub_steps > 0:
             self.stub_name = Name(ea)
+            #print "in self.stub_steps > 0: Name: %s" % self.stub_name
             self.stub_steps = self.stub_steps - 1
             request_step_into()
             run_requests()
@@ -1482,8 +1483,19 @@ class X86CapHook(FunCapHook):
 
         ## several different types of stubs spotted in kernel32.dll one Windows 7 32bit, maybe others dll as well ?
         # type 1 - simple jump to offset - need to do 1 single step
+
+
+        # a bit of a workaroun - we need to know if it is code or note before making it code. Needed for code_discovery
+
+        if(isCode(GetFlags(ea))):
+            self.isCode = True
+        else:
+            self.isCode = False
+            MakeCode(ea)
+
         disasm = GetDisasm(ea)
         if re.match('^jmp', disasm):
+            #print "in check_stub(): JMP stub detected"
             return 1
         # type 2 - strange do-nothing-instruction chain like the below
         # kernel32.dll:76401484 8B FF                         mov     edi, edi
