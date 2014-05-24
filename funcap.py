@@ -234,13 +234,12 @@ class FunCapHook(DBG_Hooks):
 
         self.output("hooking function: %s()" % func)
 
-        f = get_func(ea)
-        start_ea = f.startEA
-        end_ea = f.endEA
-        if jump:
-            self.add_call_and_jump_bp(start_ea, end_ea)
-        else:
-            self.add_call_bp(start_ea, end_ea)
+        chunks = Chunks(ea)
+        for (start_ea, end_ea) in chunks:
+            if jump:
+                self.add_call_and_jump_bp(start_ea, end_ea)
+            else:
+                self.add_call_bp(start_ea, end_ea)
         self.hooked.append(func)
 
     def hookSeg(self, seg = "", jump = False):
