@@ -1027,6 +1027,7 @@ class FunCapHook(DBG_Hooks):
         '''
         Called when breakpoint hits on a jump instruction when code_discovery mode enabled
         '''
+
         if self.current_caller:
             self.delayed_caller = { 'type': 'jump', 'addr' : ea }
         else:
@@ -1036,10 +1037,11 @@ class FunCapHook(DBG_Hooks):
         '''
         Called when single stepping into a jmp instruction
         '''
+
         if self.comments:
             MakeComm(self.current_caller['addr'], "0x%x" % ea)
         seg_name = SegName(ea)
-        if self.code_discovery and not isCode(GetFlags(ea)) and not self.is_system_lib(seg_name):
+        if self.code_discovery and (not isCode(GetFlags(ea)) or not self.isCode) and not self.is_system_lib(seg_name):
             self.output("New code segment discovered: %s" % seg_name)
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
@@ -1074,8 +1076,10 @@ class FunCapHook(DBG_Hooks):
         if name: return name
 
         need_hooking = False
+        #refresh_debugger_memory() # SegName didn't seem to work sometimes
         seg_name = SegName(ea)
         if self.code_discovery and not self.is_system_lib(seg_name) and (not isCode(GetFlags(ea)) or not self.isCode):
+            print "need_hooking :: ea: %x, seg_name: %s" % (ea, seg_name)
             need_hooking = True
 
         refresh_debugger_memory() # need to call this here (thx IlfakG)
@@ -1263,6 +1267,7 @@ class FunCapHook(DBG_Hooks):
 
         #print "dbg_bpt(): 0x%x" % ea
 
+        refresh_debugger_memory()
         is_func_start = False
 
         if ea in self.stop_points:
@@ -1323,6 +1328,7 @@ class FunCapHook(DBG_Hooks):
         # if we are currently bouncing off a stub, bounce one step further
         ea = self.get_ip()
 
+        refresh_debugger_memory()
         #print "dbg_step_into(): 0x%x" % ea
 
         if self.stub_steps > 0:
@@ -1484,7 +1490,7 @@ class X86CapHook(FunCapHook):
         # type 1 - simple jump to offset - need to do 1 single step
 
 
-        # a bit of a workaroun - we need to know if it is code or note before making it code. Needed for code_discovery
+        # a bit of a workaround - we need to know if it is code or note before making it code. Needed for code_discovery
 
         if(isCode(GetFlags(ea))):
             self.isCode = True
