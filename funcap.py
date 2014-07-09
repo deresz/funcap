@@ -1042,7 +1042,7 @@ class FunCapHook(DBG_Hooks):
             MakeComm(self.current_caller['addr'], "0x%x" % ea)
         seg_name = SegName(ea)
         if self.code_discovery and (not isCode(GetFlags(ea)) or not self.isCode) and not self.is_system_lib(seg_name):
-            self.output("New code segment discovered: %s" % seg_name)
+            self.output("New code segment discovered: %s (0x%x => 0x%x)" % (seg_name, self.current_caller['addr'], ea))
             start_ea = SegStart(ea)
             end_ea = SegEnd(ea)
             refresh_debugger_memory()
