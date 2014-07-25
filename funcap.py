@@ -1079,7 +1079,7 @@ class FunCapHook(DBG_Hooks):
         #refresh_debugger_memory() # SegName didn't seem to work sometimes
         seg_name = SegName(ea)
         if self.code_discovery and not self.is_system_lib(seg_name) and (not isCode(GetFlags(ea)) or not self.isCode):
-            print "need_hooking :: ea: %x, seg_name: %s" % (ea, seg_name)
+            #print "need_hooking :: ea: %x, seg_name: %s" % (ea, seg_name)
             need_hooking = True
 
         refresh_debugger_memory() # need to call this here (thx IlfakG)
@@ -1134,6 +1134,13 @@ class FunCapHook(DBG_Hooks):
         '''
 
         ea = self.get_ip()
+
+        if self.is_fake_call(ea):
+            MakeComm(self.current_caller['addr'], "fake function call to 0x%x" % ea)
+            self.output("0x%X: fake function call to 0x%x" % (self.current_caller['addr'],ea))
+            self.current_caller = self.delayed_caller
+            self.delayed_caller = None
+            return 0
 
         #print "handle_after_call(): 0x%x" % ea
 
@@ -1393,7 +1400,8 @@ class X86CapHook(FunCapHook):
         '''
         Check if we are at jump to subrouting instruction
         '''
-        mnem = GetMnem(ea)
+        mnem = GetDisasm(ea)
+        if re.match('call\s+far ptr', mnem): return None # when IDA badly identifies data as code it throws false positives - zbot example
         return re.match('call', mnem)
 
     def is_jump(self, ea):
@@ -1513,6 +1521,14 @@ class X86CapHook(FunCapHook):
             return 5
         # no stubs. You can define your custom stubs here
         return 0
+
+    def is_fake_call(self, ea):
+        '''
+        Check if it is a fake call and function should not be analyzed there
+        Currently only checking call-to-pops, what else ?
+        '''
+        mnem = GetMnem(ea)
+        return re.match('pop', mnem)
 
 class AMD64CapHook(FunCapHook):
     '''
@@ -1637,6 +1653,15 @@ class AMD64CapHook(FunCapHook):
         # no stubs
         return 0
 
+    def is_fake_call(self, ea):
+        '''
+        Check if it is a fake call and function should not be analyzed there
+        Currently only checking call-to-pops, what else ?
+        '''
+        mnem = GetMnem(ea)
+        return re.match('pop', mnem)
+
+
 class ARMCapHook(FunCapHook):
     '''
     ARM/Thumb architecture. Not every feature supported yet, especially stack-based argument capturing.
@@ -1717,6 +1742,13 @@ class ARMCapHook(FunCapHook):
     # don't know about stubs on this platform - worth to check
     def check_stub(self, ea):
         return 0
+
+    def is_fake_call(self, ea):
+        '''
+        Not implemented for this platform yet
+        '''
+        return False
+
 
 
 class CallGraph(GraphViewer):
