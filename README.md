@@ -170,6 +170,6 @@ Thanks to [Bartol0](https://github.com/Bartol0) we now have multiple_dereference
 In "utils" fodler you will find some other useful scripts:
 - fundump.py & funload.py - a pair of scripts that will dump function names from one IDB, for example your static IDB file, and then will rename the same functions (based on their signatures) in another IDB file. For example, if you are debugging a code that is moved around in memory in a non-standard way and IDA is not able to be told that it is your relocated static IDB, this is for you.
 
-_Contact_
+__Contact__
 
 [@deresz666](http://twitter/deresz666) - deresz@gmail.com
