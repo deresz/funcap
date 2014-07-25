@@ -172,4 +172,4 @@ In "utils" fodler you will find some other useful scripts:
 
 _Contact_
 
-[@deresz666](http://twitter/deresz666) - deresz<at>gmail.com
+[@deresz666](http://twitter/deresz666) - deresz@gmail.com
