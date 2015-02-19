@@ -113,7 +113,7 @@ There is more methods to interface with the "public interface" of object d, of w
         @param ea: address of the new stop point to add
 
     addCJ(self, func = ""):
-        Hook noth call and jump instructions
+        Hook both call and jump instructions
 
         @param func: name of the function to hook
 
