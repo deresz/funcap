@@ -113,7 +113,7 @@ There is more methods to interface with the "public interface" of object d, of w
         @param ea: address of the new stop point to add
 
     addCJ(self, func = ""):
-        Hook noth call and jump instructions
+        Hook both call and jump instructions
 
         @param func: name of the function to hook
 
@@ -169,3 +169,13 @@ Thanks to [Bartol0](https://github.com/Bartol0) we now have multiple_dereference
 
 In "utils" fodler you will find some other useful scripts:
 - fundump.py & funload.py - a pair of scripts that will dump function names from one IDB, for example your static IDB file, and then will rename the same functions (based on their signatures) in another IDB file. For example, if you are debugging a code that is moved around in memory in a non-standard way and IDA is not able to be told that it is your relocated static IDB, this is for you.
+
+__Video tutorials__
+
+[Part 1](https://www.youtube.com/watch?v=gZfV-sjMH0A)
+[Part 2](https://www.youtube.com/watch?v=jNQ-FjJdRTc)
+[Part 3](https://www.youtube.com/watch?v=LWeYKKF7Rbg)
+
+__Contact__
+
+[@deresz666](http://twitter/deresz666) - deresz@gmail.com
