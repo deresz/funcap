@@ -1552,8 +1552,8 @@ class AMD64CapHook(FunCapHook):
     def __init__(self, **kwargs):
         self.arch = 'amd64'
         self.bits = 64
-        self.CMT_CALL_CTX = [re.compile('^RDI'), re.compile('^RSI'), re.compile('^RDX'), re.compile('^RCX')] # we are capturing 4 args, but it can be extended
-        self.CMT_RET_SAVED_CTX = [re.compile('^RDI'), re.compile('^RSI'), re.compile('^RDX'), re.compile('^RCX'), re.compile('^arg')]
+        self.CMT_CALL_CTX = [re.compile('^RCX'), re.compile('^RDX'), re.compile('^R8'), re.compile('^R9')] # we are capturing 4 args, but it can be extended
+        self.CMT_RET_SAVED_CTX = [re.compile('^RCX'), re.compile('^RDX'), re.compile('^R8'), re.compile('^R9'), re.compile('^arg')]
         self.CMT_RET_CTX = [re.compile('^RAX')]
         FunCapHook.__init__(self, **kwargs)
 
