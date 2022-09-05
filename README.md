@@ -3,9 +3,11 @@ funcap
 
 __IDA Pro script to add some useful runtime info to static analysis.__
 
+**NEW**: Ported to IDA 7.x and Python3
+
 _Overview_
 
-This script records function calls (and returns) across an executable using IDA debugger API, along with all the arguments passed. It dumps the info to a text file, and also inserts it into IDA's inline comments. This way, static analysis that  usually follows the behavioral runtime analysis when analyzing malware, can be directly fed with runtime info such as decrypted strings returned in function's arguments. In author's opinion this allows to understand the program's logic way faster than starting the "zero-knowledge" reversing. Quick understanding of a malware sample code was precisely the motivation to write this script and the author has been using it succesfully at his $DAYJOB. It is best to see the examples with screenshots to see how it works (see below). It must be noted that the script has been designed with many misconceptions, errors and bad design decisions (see [issues](https://github.com/deresz/funcap/issues) and [funcap.py](https://github.com/deresz/funcap/blob/master/funcap.py) code) as I was learning when coding but it has one advantage - it kind of works :) Current architectures supported are x86, amd64 and arm.
+This script records function calls (and returns) across an executable using IDA debugger API, along with all the arguments passed. It dumps the info to a text file, and also inserts it into IDA's inline comments. This way, static analysis that  usually follows the behavioral runtime analysis when analyzing malware, can be directly fed with runtime info such as decrypted strings returned in function's arguments. In author's opinion this allows to understand the program's logic way faster than starting the "zero-knowledge" reversing. Quick understanding of a malware sample code was precisely the motivation to write this script and the author has been using it succesfully at his $DAYJOB. It is best to see the examples with screenshots to see how it works (see below). It must be noted that the script has been designed with many misconceptions, errors and bad design decisions (see [issues](https://github.com/deresz/funcap/issues) and [funcap.py](https://github.com/deresz/funcap/blob/master/funcap.py) code) as I was learning when coding but it has one advantage - it kind of works :) Current architectures supported are x86, amd64 and arm (not 100% of features).
 
 So let's look at the first example - this is how funcap inserts comments into IDA listing:
 
@@ -176,6 +178,12 @@ __Video tutorials__
 [Part 2](https://www.youtube.com/watch?v=jNQ-FjJdRTc)
 [Part 3](https://www.youtube.com/watch?v=LWeYKKF7Rbg)
 
+__Change log__
+
+_2022-05-09_
+
+Ported to Python3 and to IDA 7.x API
+
 __Contact__
 
-[@deresz666](http://twitter/deresz666) - deresz@gmail.com
+[@deresz666](http://twitter/deresz666) - deresz\@gmail.com
